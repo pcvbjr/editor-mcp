@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { editorErrorCodeSchema, editorErrorEnvelopeSchema } from '../src/errors.js';
+import { editorErrorCodeSchema, editorErrorEnvelopeSchema } from '../src/index.js';
 
 const stableEditorErrorCodes = [
   'INVALID_REQUEST',
