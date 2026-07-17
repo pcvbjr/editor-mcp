@@ -26,6 +26,7 @@ export class ObservedStdioTransport implements Transport {
     private readonly command: string,
     private readonly args: string[],
     private readonly cwd: string,
+    private readonly closeGraceMs = 1_000,
   ) {
     this.childExitPromise = new Promise<ObservedChildExit>((resolve) => {
       this.resolveChildExit = resolve;
@@ -53,6 +54,7 @@ export class ObservedStdioTransport implements Transport {
         reject(error);
       });
       child.once('close', (code, signal) => {
+        this.child = undefined;
         this.resolveChildExit({ code, signal });
         this.onclose?.();
       });
@@ -86,8 +88,43 @@ export class ObservedStdioTransport implements Transport {
   }
 
   async close(): Promise<void> {
-    this.child?.stdin.end();
-    await this.childExitPromise;
+    const child = this.child;
+    if (child === undefined) {
+      return;
+    }
+
+    child.stdin.end();
+    if (await this.waitForExit()) {
+      return;
+    }
+
+    child.kill('SIGTERM');
+    if (await this.waitForExit()) {
+      return;
+    }
+
+    child.kill('SIGKILL');
+    if (!(await this.waitForExit())) {
+      throw new Error('Observed MCP child process did not exit after SIGKILL');
+    }
+  }
+
+  private async waitForExit(): Promise<boolean> {
+    let timeout: NodeJS.Timeout | undefined;
+    try {
+      return await Promise.race([
+        this.childExitPromise.then(() => true),
+        new Promise<false>((resolve) => {
+          timeout = setTimeout(() => {
+            resolve(false);
+          }, this.closeGraceMs);
+        }),
+      ]);
+    } finally {
+      if (timeout !== undefined) {
+        clearTimeout(timeout);
+      }
+    }
   }
 
   private processMessages(): void {

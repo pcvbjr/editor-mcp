@@ -22,9 +22,10 @@ export function registerProbeTool(server: McpServer, onCall: () => void): void {
     },
     ({ message }) => {
       onCall();
+      const output = { echo: message };
       return {
-        content: [{ type: 'text', text: message }],
-        structuredContent: { echo: message },
+        content: [{ type: 'text', text: JSON.stringify(output) }],
+        structuredContent: output,
       };
     },
   );

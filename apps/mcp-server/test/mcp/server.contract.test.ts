@@ -70,6 +70,7 @@ describe('MCP server factory', () => {
         arguments: { message: 'hello' },
       });
       expect(validResult).toMatchObject({
+        content: [{ type: 'text', text: '{"echo":"hello"}' }],
         structuredContent: { echo: 'hello' },
       });
       expect(handlerCallCount).toBe(1);
