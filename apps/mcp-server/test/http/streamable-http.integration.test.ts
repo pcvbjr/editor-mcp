@@ -2,6 +2,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { spawn } from 'node:child_process';
+import { createServer as createNodeServer, type AddressInfo } from 'node:net';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it, vi } from 'vitest';
 
@@ -13,6 +14,39 @@ import { registerProbeTool } from '../support/register-probe-tool.js';
 
 const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url));
 const compiledHttpCli = fileURLToPath(new URL('../../dist/http/cli.js', import.meta.url));
+
+async function runCompiledHttpCliToExit(
+  environment: Record<string, string>,
+): Promise<{ code: number | null; signal: NodeJS.Signals | null; stderr: string; stdout: string }> {
+  const child = spawn(process.execPath, [compiledHttpCli], {
+    cwd: repositoryRoot,
+    env: { ...process.env, ...environment },
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let stderr = '';
+  let stdout = '';
+  child.stderr.on('data', (chunk: Buffer) => {
+    stderr += chunk.toString();
+  });
+  child.stdout.on('data', (chunk: Buffer) => {
+    stdout += chunk.toString();
+  });
+
+  return new Promise((resolve, reject) => {
+    const timer = setTimeout(() => {
+      child.kill('SIGKILL');
+      reject(new Error(`compiled HTTP binary did not exit: ${stderr}`));
+    }, 5_000);
+    child.once('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    child.once('exit', (code, signal) => {
+      clearTimeout(timer);
+      resolve({ code, signal, stderr, stdout });
+    });
+  });
+}
 
 describe('Streamable HTTP MCP integration', () => {
   it('completes a real SDK handshake and keeps capabilities per request', async () => {
@@ -129,6 +163,65 @@ describe('Streamable HTTP MCP integration', () => {
     }
   });
 
+  it('drains an active tool request before listener shutdown completes', async () => {
+    let markStarted: (() => void) | undefined;
+    let finishTool: (() => void) | undefined;
+    const started = new Promise<void>((resolve) => {
+      markStarted = resolve;
+    });
+    const toolGate = new Promise<void>((resolve) => {
+      finishTool = resolve;
+    });
+    const config = createHttpServerConfig({ port: 0 });
+    const app = createHttpApp({
+      config,
+      register: (server) => {
+        server.registerTool('test.slow', {}, async () => {
+          markStarted?.();
+          await toolGate;
+          return { content: [{ type: 'text' as const, text: 'finished' }] };
+        });
+      },
+    });
+    const runtime = createHttpServerRuntime(app, config);
+    const address = await runtime.start();
+    const client = new Client({ name: 'drain-http-client', version: '1.0.0' });
+    await client.connect(
+      new StreamableHTTPClientTransport(
+        new URL(`http://127.0.0.1:${String(address.port)}/mcp`),
+      ) as Transport,
+    );
+
+    try {
+      const call = client.callTool({ name: 'test.slow' });
+      await started;
+      const close = runtime.close();
+      let closeSettled = false;
+      void close.then(
+        () => {
+          closeSettled = true;
+        },
+        () => {
+          closeSettled = true;
+        },
+      );
+      await new Promise<void>((resolve) => {
+        setImmediate(resolve);
+      });
+      expect(closeSettled).toBe(false);
+
+      finishTool?.();
+      await expect(call).resolves.toMatchObject({
+        content: [{ type: 'text', text: 'finished' }],
+      });
+      await expect(close).resolves.toBeUndefined();
+    } finally {
+      finishTool?.();
+      await client.close();
+      await runtime.close().catch(() => undefined);
+    }
+  });
+
   it('starts the compiled HTTP binary and exits cleanly on SIGTERM', async () => {
     const child = spawn(process.execPath, [compiledHttpCli], {
       cwd: repositoryRoot,
@@ -184,5 +277,46 @@ describe('Streamable HTTP MCP integration', () => {
     await expect(exit).resolves.toEqual({ code: 0, signal: null });
     expect(stdout).toBe('');
     expect(stderr).toContain('/mcp');
+  });
+
+  it('exits cleanly with concise diagnostics for invalid configuration', async () => {
+    const result = await runCompiledHttpCliToExit({ EDITOR_MCP_HTTP_PORT: '' });
+
+    expect(result.code).toBe(1);
+    expect(result.signal).toBeNull();
+    expect(result.stdout).toBe('');
+    expect(result.stderr).toContain('MCP HTTP server failed to initialize:');
+    expect(result.stderr).not.toContain('\n    at ');
+  });
+
+  it('closes and exits after a real address-in-use startup failure', async () => {
+    const blocker = createNodeServer();
+    await new Promise<void>((resolve, reject) => {
+      blocker.once('error', reject);
+      blocker.listen(0, '127.0.0.1', resolve);
+    });
+    const blockedAddress = blocker.address() as AddressInfo;
+
+    try {
+      const result = await runCompiledHttpCliToExit({
+        EDITOR_MCP_HTTP_HOST: '127.0.0.1',
+        EDITOR_MCP_HTTP_PORT: String(blockedAddress.port),
+        EDITOR_MCP_HTTP_ALLOWED_HOSTS: '127.0.0.1',
+      });
+
+      expect(result.code).toBe(1);
+      expect(result.signal).toBeNull();
+      expect(result.stdout).toBe('');
+      expect(result.stderr).toContain('MCP HTTP server failed to start:');
+      expect(result.stderr).toContain('EADDRINUSE');
+      expect(result.stderr).not.toContain('\n    at ');
+    } finally {
+      await new Promise<void>((resolve, reject) => {
+        blocker.close((error) => {
+          if (error !== undefined) reject(error);
+          else resolve();
+        });
+      });
+    }
   });
 });

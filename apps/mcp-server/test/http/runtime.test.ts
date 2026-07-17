@@ -96,6 +96,46 @@ describe('HTTP server lifecycle', () => {
     expect(runtime.state).toBe('closed');
   });
 
+  it('bounds shutdown when startup never settles', async () => {
+    vi.useFakeTimers();
+    const server = createFakeServer();
+    const runtime = createRuntime(() => server as never, 10);
+
+    const startOutcome = runtime.start().catch((error: unknown) => error);
+    const closeOutcome = runtime.close().catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(10);
+
+    await expect(startOutcome).resolves.toEqual(
+      new Error('HTTP server startup did not settle before the shutdown deadline'),
+    );
+    await expect(closeOutcome).resolves.toEqual(
+      new Error('HTTP server startup did not settle before the shutdown deadline'),
+    );
+    expect(server.close).toHaveBeenCalledOnce();
+    expect(runtime.state).toBe('closed');
+  });
+
+  it('closes a listener that becomes ready after startup cancellation', async () => {
+    vi.useFakeTimers();
+    const server = createFakeServer();
+    let listening: ((info: AddressInfo) => void) | undefined;
+    const runtime = createRuntime((_options, callback) => {
+      listening = callback;
+      return server as never;
+    }, 10);
+
+    const startOutcome = runtime.start().catch((error: unknown) => error);
+    const closeOutcome = runtime.close().catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(10);
+    await startOutcome;
+    await closeOutcome;
+
+    listening?.(address);
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(server.close).toHaveBeenCalledTimes(2);
+  });
+
   it('rejects a start after close without opening a listener', async () => {
     const serveFunction = vi.fn<ServeFunction>();
     const runtime = createRuntime(serveFunction);
@@ -141,6 +181,28 @@ describe('HTTP server lifecycle', () => {
     expect(listening).toBeDefined();
   });
 
+  it('closes the listener after a startup failure', async () => {
+    const server = createFakeServer();
+    const runtime = createRuntime(() => server as never);
+
+    const start = runtime.start();
+    server.emitError(new Error('listen failed'));
+
+    await expect(start).rejects.toThrow('listen failed');
+    await expect(runtime.close()).resolves.toBeUndefined();
+    expect(server.close).toHaveBeenCalledOnce();
+  });
+
+  it('rejects a synchronous listener construction failure without leaking state', async () => {
+    const runtime = createRuntime(() => {
+      throw new Error('serve failed');
+    });
+
+    await expect(runtime.start()).rejects.toThrow('serve failed');
+    await expect(runtime.close()).resolves.toBeUndefined();
+    expect(runtime.state).toBe('closed');
+  });
+
   it('propagates listener close failures', async () => {
     const server = createFakeServer({ closeError: new Error('close failed') });
     const runtime = createRuntime((_options, callback) => {
@@ -151,6 +213,33 @@ describe('HTTP server lifecycle', () => {
 
     await expect(runtime.close()).rejects.toThrow('close failed');
     expect(runtime.state).toBe('closed');
+  });
+
+  it('treats an already-stopped listener as closed', async () => {
+    const notRunning = Object.assign(new Error('not running'), {
+      code: 'ERR_SERVER_NOT_RUNNING',
+    });
+    const server = createFakeServer({ closeError: notRunning });
+    const runtime = createRuntime((_options, callback) => {
+      callback?.(address);
+      return server as never;
+    });
+    await runtime.start();
+
+    await expect(runtime.close()).resolves.toBeUndefined();
+  });
+
+  it('cancels the shutdown deadline when listener close rejects', async () => {
+    vi.useFakeTimers();
+    const server = createFakeServer({ closeError: new Error('close failed') });
+    const runtime = createRuntime((_options, callback) => {
+      callback?.(address);
+      return server as never;
+    }, 10);
+    await runtime.start();
+
+    await expect(runtime.close()).rejects.toThrow('close failed');
+    expect(vi.getTimerCount()).toBe(0);
   });
 
   it('waits for active work before completing graceful shutdown', async () => {
@@ -217,5 +306,30 @@ describe('HTTP server lifecycle', () => {
       new Error('HTTP server did not close after forced connection termination'),
     );
     expect(server.closeAllConnections).toHaveBeenCalledOnce();
+  });
+
+  it('reports an expired drain when forceful connection closing is unavailable', async () => {
+    vi.useFakeTimers();
+    let closeCallback: ((error?: Error) => void) | undefined;
+    const server = {
+      once: vi.fn(() => server),
+      close: vi.fn((callback: (error?: Error) => void) => {
+        closeCallback = callback;
+      }),
+    };
+    const runtime = createRuntime((_options, callback) => {
+      callback?.(address);
+      return server as never;
+    }, 10);
+    await runtime.start();
+
+    const outcome = runtime.close().catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(10);
+
+    await expect(outcome).resolves.toEqual(
+      new Error('HTTP server exceeded its graceful shutdown deadline'),
+    );
+    expect(closeCallback).toBeDefined();
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

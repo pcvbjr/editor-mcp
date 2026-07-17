@@ -1,6 +1,7 @@
 import { z } from 'zod';
 
 import { parseHostAuthority } from './authority.js';
+import { parseOrigin } from './origin.js';
 
 const loopbackHosts = ['127.0.0.1', 'localhost', '[::1]'] as const;
 
@@ -24,32 +25,14 @@ const optionalCsv = z.string().transform((value, context) => {
 });
 
 const origin = z.string().transform((value, context) => {
-  if (value === 'null' || value.includes('*')) {
-    context.addIssue({ code: 'custom', message: 'Origins must be explicit values' });
-    return z.NEVER;
-  }
+  const parsed = parseOrigin(value);
+  if (parsed !== undefined) return parsed;
 
-  try {
-    const parsed = new URL(value);
-    if (
-      !['http:', 'https:'].includes(parsed.protocol) ||
-      parsed.username.length > 0 ||
-      parsed.password.length > 0 ||
-      parsed.pathname !== '/' ||
-      parsed.search.length > 0 ||
-      parsed.hash.length > 0
-    ) {
-      context.addIssue({
-        code: 'custom',
-        message: 'Origins must contain only a scheme and authority',
-      });
-      return z.NEVER;
-    }
-    return parsed.origin;
-  } catch {
-    context.addIssue({ code: 'custom', message: 'Origin must be a valid URL' });
-    return z.NEVER;
-  }
+  context.addIssue({
+    code: 'custom',
+    message: 'Origins must be explicit HTTP(S) scheme-and-authority values',
+  });
+  return z.NEVER;
 });
 
 const canonicalAuthorities = csv.transform((values, context) => {

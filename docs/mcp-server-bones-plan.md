@@ -77,19 +77,27 @@ dependency.
 The internal seam stays intentionally small:
 
 ```ts
-type CapabilityRegistrar = (server: McpServer) => void;
+interface CapabilityRegistry {
+  readonly registerTool: McpServer['registerTool'];
+}
+
+type CapabilityRegistrar = (registry: CapabilityRegistry) => void;
 
 interface CreateMcpServerOptions {
   readonly name: string;
   readonly version: string;
   readonly register?: CapabilityRegistrar;
+  readonly reportError?: InternalErrorReporter;
 }
 
 function createMcpServer(options: CreateMcpServerOptions): McpServer;
 ```
 
 Construction performs no I/O and does not connect a transport. Registration completes before
-connection. The registrar is an internal composition seam, proven only with a test fixture; it is
+connection. The registrar receives only the supported modern capability surface; tool callbacks are
+wrapped there so unexpected exceptions are reported internally and sanitized for clients. Preserve
+the SDK's `UrlElicitationRequiredError` control flow so URL-mode elicitation remains a JSON-RPC error
+instead of being converted into a generic tool result. The registrar is an internal composition seam,
 not a public plugin API. Package metadata is supplied at the process edge from the app manifest.
 
 ## Lifecycle contract

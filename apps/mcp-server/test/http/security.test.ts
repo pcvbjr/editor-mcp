@@ -49,6 +49,41 @@ describe('HTTP request security', () => {
     },
   );
 
+  it.each([
+    'https://agent.example/path',
+    'https://agent.example?query',
+    'https://agent.example#fragment',
+    'https://user@agent.example',
+  ])('rejects malformed Origin value %s', async (origin) => {
+    const response = await app.request('http://127.0.0.1:43123/healthz', {
+      headers: { Origin: origin },
+    });
+
+    expect(response.status).toBe(403);
+  });
+
+  it('honors configured Host ports and ignores forwarded host claims', async () => {
+    const portConfig = createHttpServerConfig({ allowedHosts: ['localhost:43123'] });
+    const portApp = createHttpApp({ config: portConfig });
+
+    expect((await portApp.request('http://localhost:43123/healthz')).status).toBe(200);
+    expect((await portApp.request('http://localhost:43124/healthz')).status).toBe(403);
+    expect(
+      (
+        await app.request('http://evil.example/healthz', {
+          headers: { 'X-Forwarded-Host': 'localhost' },
+        })
+      ).status,
+    ).toBe(403);
+    expect(
+      (
+        await app.request('http://localhost/healthz', {
+          headers: { 'X-Forwarded-Host': 'evil.example' },
+        })
+      ).status,
+    ).toBe(200);
+  });
+
   it('does not emit permissive CORS headers', async () => {
     const response = await app.request('http://127.0.0.1:43123/healthz');
 

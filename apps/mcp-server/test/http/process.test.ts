@@ -110,4 +110,31 @@ describe('HTTP process orchestration', () => {
     expect(processControl.control.forceExit).toHaveBeenCalledWith(143);
     finishClose?.();
   });
+
+  it('does not announce readiness when shutdown starts before listening', async () => {
+    let finishStart: ((address: AddressInfo) => void) | undefined;
+    const close = vi.fn(() => Promise.resolve());
+    const processControl = createProcessControl();
+    const run = runHttpServerProcess({
+      runtime: {
+        start: () =>
+          new Promise<AddressInfo>((resolve) => {
+            finishStart = resolve;
+          }),
+        close,
+      },
+      processControl: processControl.control,
+    });
+
+    processControl.emit('SIGTERM');
+    finishStart?.(address);
+    await run;
+    await vi.waitFor(() => {
+      expect(close).toHaveBeenCalledOnce();
+    });
+
+    expect(processControl.control.writeStderr).not.toHaveBeenCalledWith(
+      expect.stringContaining('listening'),
+    );
+  });
 });

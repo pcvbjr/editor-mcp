@@ -1,8 +1,13 @@
 import { McpServer, type RegisteredTool } from '@modelcontextprotocol/sdk/server/mcp.js';
+import { ErrorCode, McpError } from '@modelcontextprotocol/sdk/types.js';
 
 import { reportInternalError, type InternalErrorReporter } from './diagnostics.js';
 
-export type CapabilityRegistrar = (server: McpServer) => void;
+export interface CapabilityRegistry {
+  readonly registerTool: McpServer['registerTool'];
+}
+
+export type CapabilityRegistrar = (registry: CapabilityRegistry) => void;
 
 export interface CreateMcpServerOptions {
   readonly name: string;
@@ -18,35 +23,44 @@ type UncheckedRegisterTool = (
   callback: UncheckedToolCallback,
 ) => RegisteredTool;
 
-function installSafeToolBoundary(
+const urlElicitationRequiredCode: number = ErrorCode.UrlElicitationRequired;
+
+function safeToolCallback(
+  name: string,
+  callback: UncheckedToolCallback,
+  reportError: InternalErrorReporter | undefined,
+): UncheckedToolCallback {
+  return async (...parameters) => {
+    try {
+      return await callback(...parameters);
+    } catch (error: unknown) {
+      if (error instanceof McpError && error.code === urlElicitationRequiredCode) {
+        throw error;
+      }
+      reportInternalError(reportError, { phase: 'tool', operation: name, error });
+      throw new Error('Tool execution failed', { cause: error });
+    }
+  };
+}
+
+function createCapabilityRegistry(
   server: McpServer,
   reportError: InternalErrorReporter | undefined,
-): void {
+): CapabilityRegistry {
   // The SDK method is generic and overloaded. Erase it only at this adapter boundary, then restore
-  // the published type after wrapping every registered callback.
+  // the public method type after wrapping the callback.
   const registerTool = server.registerTool.bind(server) as UncheckedRegisterTool;
   const safeRegisterTool: UncheckedRegisterTool = (name, config, callback) =>
-    registerTool(name, config, async (...parameters) => {
-      try {
-        return await callback(...parameters);
-      } catch (error: unknown) {
-        reportInternalError(reportError, { phase: 'tool', operation: name, error });
-        throw new Error('Tool execution failed', { cause: error });
-      }
-    });
+    registerTool(name, config, safeToolCallback(name, callback, reportError));
 
-  Object.defineProperty(server, 'registerTool', {
-    configurable: false,
-    value: safeRegisterTool,
-    writable: false,
-  });
+  return {
+    registerTool: safeRegisterTool as McpServer['registerTool'],
+  };
 }
 
 export function createMcpServer(options: CreateMcpServerOptions): McpServer {
   const server = new McpServer({ name: options.name, version: options.version });
-  installSafeToolBoundary(server, options.reportError);
-
-  options.register?.(server);
+  options.register?.(createCapabilityRegistry(server, options.reportError));
 
   return server;
 }

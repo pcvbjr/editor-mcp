@@ -3,6 +3,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { createHttpApp } from '../../src/http/app.js';
 import { createHttpServerConfig } from '../../src/http/config.js';
 import type { InternalErrorReporter } from '../../src/diagnostics.js';
+import { createMcpServer } from '../../src/server.js';
+import { initializeBody, mcpHeaders } from '../support/mcp-http-fixture.js';
 
 describe('HTTP application contract', () => {
   it('keeps the health endpoint separate from MCP routing', async () => {
@@ -27,20 +29,8 @@ describe('HTTP application contract', () => {
     const app = createHttpApp({ config: createHttpServerConfig() });
     const response = await app.request('http://127.0.0.1/mcp', {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        accept: 'application/json, text/event-stream',
-      },
-      body: JSON.stringify({
-        jsonrpc: '2.0',
-        id: 1,
-        method: 'initialize',
-        params: {
-          protocolVersion: '2025-06-18',
-          capabilities: {},
-          clientInfo: { name: 'http-contract-client', version: '1.0.0' },
-        },
-      }),
+      headers: mcpHeaders,
+      body: initializeBody,
     });
 
     expect(response.status).toBe(200);
@@ -67,10 +57,7 @@ describe('HTTP application contract', () => {
     });
     const response = await app.request('http://127.0.0.1/mcp', {
       method: 'POST',
-      headers: {
-        'content-type': 'application/json',
-        accept: 'application/json, text/event-stream',
-      },
+      headers: mcpHeaders,
       body: '{}',
     });
 
@@ -82,5 +69,147 @@ describe('HTTP application contract', () => {
       { phase: 'request', error: new Error('TOP_SECRET_REQUEST') },
       { phase: 'close', error: new Error('TOP_SECRET_CLOSE') },
     ]);
+  });
+
+  it('sanitizes synchronous server construction failures through the reporter', async () => {
+    const reportError = vi.fn<InternalErrorReporter>();
+    const app = createHttpApp({
+      config: createHttpServerConfig(),
+      reportError,
+      createServer: () => {
+        throw new Error('TOP_SECRET_FACTORY');
+      },
+    });
+
+    const response = await app.request('http://127.0.0.1/mcp', {
+      method: 'POST',
+      headers: mcpHeaders,
+      body: initializeBody,
+    });
+
+    expect(response.status).toBe(500);
+    expect(await response.text()).not.toContain('TOP_SECRET_FACTORY');
+    expect(reportError).toHaveBeenCalledWith({
+      phase: 'request',
+      error: new Error('TOP_SECRET_FACTORY'),
+    });
+  });
+
+  it('sanitizes unexpected failures outside the MCP route boundary', async () => {
+    const reportError = vi.fn<InternalErrorReporter>();
+    const app = createHttpApp({ config: createHttpServerConfig(), reportError });
+    app.get('/test-unexpected-failure', () => {
+      throw new Error('TOP_SECRET_GLOBAL');
+    });
+
+    const response = await app.request('http://127.0.0.1/test-unexpected-failure');
+
+    expect(response.status).toBe(500);
+    expect(await response.text()).not.toContain('TOP_SECRET_GLOBAL');
+    expect(reportError).toHaveBeenCalledWith({
+      phase: 'request',
+      error: new Error('TOP_SECRET_GLOBAL'),
+    });
+  });
+
+  it('closes each successfully constructed server exactly once', async () => {
+    const close = vi.fn<() => void>();
+    const app = createHttpApp({
+      config: createHttpServerConfig(),
+      createServer: (options) => {
+        const server = createMcpServer(options);
+        return {
+          connect: server.connect.bind(server),
+          close: async () => {
+            close();
+            await server.close();
+          },
+        };
+      },
+    });
+
+    const response = await app.request('http://127.0.0.1/mcp', {
+      method: 'POST',
+      headers: mcpHeaders,
+      body: initializeBody,
+    });
+
+    expect(response.status).toBe(200);
+    expect(close).toHaveBeenCalledOnce();
+  });
+
+  it('isolates and closes every concurrent stateless request', async () => {
+    const servers = new Set<ReturnType<typeof createMcpServer>>();
+    const close = vi.fn<() => void>();
+    const app = createHttpApp({
+      config: createHttpServerConfig(),
+      createServer: (options) => {
+        const server = createMcpServer(options);
+        servers.add(server);
+        return {
+          connect: server.connect.bind(server),
+          close: async () => {
+            close();
+            await server.close();
+          },
+        };
+      },
+    });
+
+    const responses = await Promise.all(
+      Array.from({ length: 10 }, (_, id) =>
+        Promise.resolve().then(() =>
+          app.request('http://127.0.0.1/mcp', {
+            method: 'POST',
+            headers: mcpHeaders,
+            body: JSON.stringify({ jsonrpc: '2.0', id, method: 'ping' }),
+          }),
+        ),
+      ),
+    );
+
+    expect(responses.every((response) => response.status === 200)).toBe(true);
+    expect(servers.size).toBe(10);
+    expect(close).toHaveBeenCalledTimes(10);
+  });
+
+  it('rejects routing, security, headers, and malformed JSON before server construction', async () => {
+    const createServer = vi.fn(() => {
+      throw new Error('server must not be constructed');
+    });
+    const app = createHttpApp({ config: createHttpServerConfig(), createServer });
+
+    const responses = await Promise.all([
+      app.request('http://127.0.0.1/mcp', { method: 'GET' }),
+      app.request('http://evil.example/mcp', {
+        method: 'POST',
+        headers: mcpHeaders,
+        body: initializeBody,
+      }),
+      app.request('http://127.0.0.1/mcp', {
+        method: 'POST',
+        headers: {
+          accept: 'application/jsonp, text/event-streaming',
+          'content-type': 'application/json',
+        },
+        body: initializeBody,
+      }),
+      app.request('http://127.0.0.1/mcp', {
+        method: 'POST',
+        headers: {
+          accept: 'application/json, text/event-stream',
+          'content-type': 'text/plain; note=application/json',
+        },
+        body: initializeBody,
+      }),
+      app.request('http://127.0.0.1/mcp', {
+        method: 'POST',
+        headers: mcpHeaders,
+        body: '{',
+      }),
+    ]);
+
+    expect(responses.map((response) => response.status)).toEqual([405, 403, 406, 415, 400]);
+    expect(createServer).not.toHaveBeenCalled();
   });
 });

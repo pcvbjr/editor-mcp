@@ -24,7 +24,7 @@ export function createStderrErrorReporter(
   writeStderr: (message: string) => void,
 ): InternalErrorReporter {
   return (event) => {
-    const operation = event.phase === 'tool' ? ` ${event.operation}` : '';
+    const operation = event.phase === 'tool' ? ` ${event.operation.replace(/[\r\n]+/gu, ' ')}` : '';
     writeStderr(
       `MCP server internal ${event.phase}${operation} error: ${describeError(event.error)}\n`,
     );

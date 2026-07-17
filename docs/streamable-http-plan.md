@@ -52,7 +52,7 @@ Implementation must follow the documentation for versions actually resolved by t
 ### MCP protocol
 
 The normative transport contract is the MCP
-[Streamable HTTP specification](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports).
+[Streamable HTTP specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports).
 It defines one MCP endpoint supporting HTTP `POST` and `GET`, with optional `DELETE` for an established
 session. A POST response may be a single JSON object or an SSE stream. The older HTTP+SSE transport is
 superseded and will not be implemented unless a real client requirement appears.
@@ -175,6 +175,13 @@ POST request, construct a fresh `McpServer`, construct a fresh transport with
 `enableJsonResponse: true`, connect them, await the complete JSON response, and close both in a
 `finally` path. JSON response mode is part of Streamable HTTP and gives the initial request-scoped
 implementation an unambiguous cleanup boundary.
+
+Validate exact media types before constructing the MCP server because the SDK transport's substring
+checks are intentionally permissive. Hono's `accepts()` helper chooses one preferred representation,
+so it does not model MCP's requirement that a POST advertise both JSON and SSE; keep the small
+MCP-specific validator at this boundary. Keep JSON-RPC batches only for the `2025-03-26` compatibility
+protocol; reject empty batches, initialization batches, and batches using later protocol revisions
+before dispatch.
 
 Do not combine immediate `finally` cleanup with an SSE response body. The SDK may return that streaming
 response before tool execution and body delivery have finished. If POST streaming is later required for
@@ -527,14 +534,20 @@ The Streamable HTTP transport slice is complete when:
 
 ## Source references
 
-- [MCP Streamable HTTP transport specification](https://modelcontextprotocol.io/specification/2025-06-18/basic/transports)
+- [MCP Streamable HTTP transport specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/transports)
 - [MCP authorization specification](https://modelcontextprotocol.io/specification/2025-11-25/basic/authorization)
 - [MCP TypeScript SDK](https://github.com/modelcontextprotocol/typescript-sdk)
-- [MCP TypeScript SDK server guide](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/server.md)
+- [MCP TypeScript SDK v1 server guide](https://github.com/modelcontextprotocol/typescript-sdk/blob/v1.x/docs/server.md)
 - [Hono on Node.js](https://hono.dev/docs/getting-started/nodejs)
+- [Hono app API](https://hono.dev/docs/api/hono)
+- [Hono Accepts helper](https://hono.dev/docs/helpers/accepts)
 - [Hono testing guide](https://hono.dev/docs/guides/testing)
 - [Node HTTP server API](https://nodejs.org/api/http.html)
 - [Node network server API](https://nodejs.org/api/net.html)
+- [Zod API](https://zod.dev/api)
+- [Vitest mocking and timer API](https://vitest.dev/api/vi)
+- [fast-check getting started](https://fast-check.dev/docs/introduction/getting-started/)
+- [pnpm continuous integration](https://pnpm.io/continuous-integration)
 - [Codex MCP client configuration](https://learn.chatgpt.com/docs/extend/mcp)
 - [Claude remote MCP connector](https://platform.claude.com/docs/en/agents-and-tools/mcp-connector)
 - [Claude custom remote MCP integrations](https://support.anthropic.com/en/articles/11503834-building-custom-integrations-via-remote-mcp-servers)

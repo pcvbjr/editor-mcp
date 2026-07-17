@@ -22,10 +22,11 @@ export async function runHttpServerProcess({
   processControl,
 }: RunHttpServerProcessOptions): Promise<void> {
   let shutdownPromise: Promise<void> | undefined;
-  let shutdownStarted = false;
+  const shutdownState = { started: false };
   let removeSignalHandlers: (() => void)[] = [];
 
   const shutdown = (): Promise<void> => {
+    shutdownState.started = true;
     shutdownPromise ??= runtime
       .close()
       .catch((error: unknown) => {
@@ -43,11 +44,11 @@ export async function runHttpServerProcess({
   };
 
   const handleSignal = (signal: SupportedTerminationSignal): void => {
-    if (shutdownStarted) {
+    if (shutdownState.started) {
       processControl.forceExit(signal === 'SIGINT' ? 130 : 143);
       return;
     }
-    shutdownStarted = true;
+    shutdownState.started = true;
     void shutdown();
   };
 
@@ -62,7 +63,9 @@ export async function runHttpServerProcess({
 
   try {
     const address = await runtime.start();
-    processControl.writeStderr(`MCP HTTP server listening at ${formatAddress(address)}/mcp\n`);
+    if (!shutdownState.started) {
+      processControl.writeStderr(`MCP HTTP server listening at ${formatAddress(address)}/mcp\n`);
+    }
   } catch (error: unknown) {
     processControl.writeStderr(`MCP HTTP server failed to start: ${describeError(error)}\n`);
     processControl.setExitCode(1);

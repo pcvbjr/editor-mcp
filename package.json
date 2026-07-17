@@ -19,7 +19,7 @@
     "mcp:inspect": "pnpm --filter @editor-mcp/mcp-server build && pnpm exec mcp-inspector node apps/mcp-server/dist/cli.js",
     "mcp:http": "pnpm --filter @editor-mcp/mcp-server build && pnpm --filter @editor-mcp/mcp-server start:http",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:coverage"
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm --filter @editor-mcp/mcp-server test:package"
   },
   "dependencies": {
     "@tiptap/core": "3.28.0",
@@ -35,7 +35,6 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@fast-check/vitest": "0.4.1",
     "@modelcontextprotocol/inspector": "0.21.2",
     "@types/node": "^22.20.1",
     "@vitest/coverage-v8": "4.1.10",

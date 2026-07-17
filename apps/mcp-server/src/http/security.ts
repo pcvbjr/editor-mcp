@@ -2,6 +2,7 @@ import type { MiddlewareHandler } from 'hono';
 
 import { parseHostAuthority } from './authority.js';
 import type { HttpServerConfig } from './config.js';
+import { parseOrigin } from './origin.js';
 
 function hostMatches(requestHost: string, allowedHost: string): boolean {
   const requestAuthority = parseHostAuthority(requestHost);
@@ -24,12 +25,11 @@ function isAllowedOrigin(request: Request, config: HttpServerConfig): boolean {
     return true;
   }
 
-  try {
-    const normalizedOrigin = new URL(requestOrigin).origin;
-    return config.allowedOrigins.some((allowedOrigin) => allowedOrigin === normalizedOrigin);
-  } catch {
-    return false;
-  }
+  const normalizedOrigin = parseOrigin(requestOrigin);
+  return (
+    normalizedOrigin !== undefined &&
+    config.allowedOrigins.some((allowedOrigin) => allowedOrigin === normalizedOrigin)
+  );
 }
 
 export function createSecurityMiddleware(config: HttpServerConfig): MiddlewareHandler {
