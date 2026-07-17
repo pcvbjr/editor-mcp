@@ -9,6 +9,8 @@ Editor MCP is a production-oriented, collaboration-first document mutation servi
 - [MVP schema](docs/mvp-schema.md) — normative nodes, marks, attributes, and semantic operations
 - [In-document diffing](docs/diffing-plan.md) — tracked-change semantics and implementation plan
 - [MCP deep dive](docs/mcp-deep-dive.md) — protocol research and reference
+- [MCP server bones](docs/mcp-server-bones-plan.md) — TDD plan and acceptance criteria for the
+  stdio server shell
 - [Original design narrative](docs/scratch/plan.md) — historical, non-normative context
 
 ## Development setup
@@ -40,3 +42,24 @@ only one source of command behavior.
 
 Bundling, browser end-to-end tests, release automation, and collaboration dependencies are
 deferred until the corresponding implementation phases.
+
+## MCP server shell
+
+The local stdio server is built from the `apps/mcp-server` app. It intentionally advertises no
+product tools, resources, or prompts yet.
+
+```sh
+pnpm --filter @editor-mcp/mcp-server build
+pnpm --filter @editor-mcp/mcp-server test
+pnpm --filter @editor-mcp/mcp-server test:integration
+pnpm --filter @editor-mcp/mcp-server start
+```
+
+To inspect the compiled server manually:
+
+```sh
+make mcp-inspect
+```
+
+Inspector should complete initialization and report the MCP app name and version. Product
+capabilities are not registered until the first product-capability slice is integrated.
