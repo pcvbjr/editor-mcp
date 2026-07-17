@@ -1,5 +1,6 @@
-import type { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
+
+import type { CapabilityRegistry } from '../../src/server.js';
 
 const probeInputSchema = z
   .object({
@@ -15,7 +16,7 @@ const probeOutputSchema = z
   })
   .strict();
 
-export function registerProbeTool(server: McpServer, onCall: () => void): void {
+export function registerProbeTool(server: CapabilityRegistry, onCall: () => void): void {
   server.registerTool(
     'test.probe',
     {

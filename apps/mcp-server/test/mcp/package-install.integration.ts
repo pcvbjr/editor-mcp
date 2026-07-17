@@ -1,12 +1,14 @@
 import assert from 'node:assert/strict';
-import { spawnSync } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { access, mkdir, mkdtemp, readdir, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
+import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 
 import packageManifest from '../../package.json' with { type: 'json' };
 
@@ -61,6 +63,7 @@ try {
     'mcp-server',
   );
   await access(join(installedPackageDirectory, 'dist', 'cli.js'));
+  await access(join(installedPackageDirectory, 'dist', 'http', 'cli.js'));
   await assert.rejects(access(join(installedPackageDirectory, 'src')));
   await assert.rejects(access(join(installedPackageDirectory, 'dist', 'tsconfig.tsbuildinfo')));
 
@@ -92,6 +95,81 @@ try {
   }
 
   assert.equal(stderr.join(''), '');
+
+  const installedHttpBin = join(
+    consumerDirectory,
+    'node_modules',
+    '.bin',
+    process.platform === 'win32' ? 'editor-mcp-http.CMD' : 'editor-mcp-http',
+  );
+  const httpChild = spawn(installedHttpBin, [], {
+    cwd: consumerDirectory,
+    env: {
+      ...process.env,
+      EDITOR_MCP_HTTP_HOST: '127.0.0.1',
+      EDITOR_MCP_HTTP_PORT: '0',
+      EDITOR_MCP_HTTP_ALLOWED_HOSTS: '127.0.0.1',
+    },
+    shell: process.platform === 'win32',
+    stdio: ['ignore', 'pipe', 'pipe'],
+  });
+  let httpStdout = '';
+  let httpStderr = '';
+  httpChild.stdout.on('data', (chunk: Buffer) => {
+    httpStdout += chunk.toString();
+  });
+  const httpExit = new Promise<{ code: number | null; signal: NodeJS.Signals | null }>(
+    (resolve) => {
+      httpChild.once('exit', (code, signal) => {
+        resolve({ code, signal });
+      });
+    },
+  );
+  const httpReady = new Promise<string>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      reject(new Error(`installed HTTP binary did not become ready: ${httpStderr}`));
+    }, 5_000);
+    httpChild.stderr.on('data', (chunk: Buffer) => {
+      httpStderr += chunk.toString();
+      const match = /MCP HTTP server listening at (http:\/\/[^/]+)\/mcp/u.exec(httpStderr);
+      if (match?.[1] !== undefined) {
+        clearTimeout(timer);
+        resolve(match[1]);
+      }
+    });
+    httpChild.once('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
+    httpChild.once('exit', (code, signal) => {
+      clearTimeout(timer);
+      reject(
+        new Error(
+          `installed HTTP binary exited before readiness: code=${String(code)} signal=${String(signal)} ${httpStderr}`,
+        ),
+      );
+    });
+  });
+  const httpClient = new Client({ name: 'packed-http-client', version: '1.0.0' });
+
+  try {
+    const baseUrl = await httpReady;
+    await httpClient.connect(
+      new StreamableHTTPClientTransport(new URL(`${baseUrl}/mcp`)) as Transport,
+      { timeout: 5_000 },
+    );
+    assert.deepEqual(httpClient.getServerVersion(), {
+      name: packageManifest.name,
+      version: packageManifest.version,
+    });
+  } finally {
+    await httpClient.close();
+    httpChild.kill('SIGTERM');
+  }
+
+  assert.deepEqual(await httpExit, { code: 0, signal: null });
+  assert.equal(httpStdout, '');
+  assert.match(httpStderr, /\/mcp/u);
 } finally {
   await rm(temporaryDirectory, { recursive: true, force: true });
 }

@@ -1,8 +1,10 @@
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
-import { describe, expect, it } from 'vitest';
+import { ErrorCode, UrlElicitationRequiredError } from '@modelcontextprotocol/sdk/types.js';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createMcpServer, type CapabilityRegistrar } from '../../src/server.js';
+import type { InternalErrorReporter } from '../../src/diagnostics.js';
 import { registerProbeTool } from '../support/register-probe-tool.js';
 
 const serverInfo = {
@@ -78,5 +80,88 @@ describe('MCP server factory', () => {
       await client.close();
       await server.close();
     }
+  });
+
+  it('maps unexpected tool exceptions to a safe result and reports the internal cause', async () => {
+    const reportError = vi.fn<InternalErrorReporter>();
+    const server = createMcpServer({
+      ...serverInfo,
+      reportError,
+      register: (registry) => {
+        registry.registerTool('test.secret-error', {}, () => {
+          throw new Error('TOP_SECRET_INTERNAL');
+        });
+      },
+    });
+    const client = new Client({ name: 'contract-test-client', version: '1.0.0' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+
+      const result = await client.callTool({ name: 'test.secret-error' });
+      expect(result).toMatchObject({
+        content: [{ type: 'text', text: 'Tool execution failed' }],
+        isError: true,
+      });
+      expect(JSON.stringify(result)).not.toContain('TOP_SECRET_INTERNAL');
+      const event = reportError.mock.calls[0]?.[0];
+      expect(event).toEqual({
+        phase: 'tool',
+        operation: 'test.secret-error',
+        error: new Error('TOP_SECRET_INTERNAL'),
+      });
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it('preserves the SDK URL-elicitation control-flow error', async () => {
+    const reportError = vi.fn<InternalErrorReporter>();
+    const server = createMcpServer({
+      ...serverInfo,
+      reportError,
+      register: (registry) => {
+        registry.registerTool('test.url-elicitation', {}, () => {
+          throw new UrlElicitationRequiredError([
+            {
+              mode: 'url',
+              message: 'Authentication is required',
+              url: 'https://example.com/authorize',
+              elicitationId: 'test-elicitation',
+            },
+          ]);
+        });
+      },
+    });
+    const client = new Client({ name: 'contract-test-client', version: '1.0.0' });
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+
+    try {
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+
+      await expect(client.callTool({ name: 'test.url-elicitation' })).rejects.toMatchObject({
+        code: ErrorCode.UrlElicitationRequired,
+      });
+      expect(reportError).not.toHaveBeenCalled();
+    } finally {
+      await client.close();
+      await server.close();
+    }
+  });
+
+  it('exposes only the supported capability registration surface', () => {
+    const register = vi.fn<CapabilityRegistrar>();
+
+    createMcpServer({ ...serverInfo, register });
+
+    const registry = register.mock.calls[0]?.[0];
+    expect(registry).toBeDefined();
+    if (registry === undefined) throw new Error('Capability registry was not provided');
+    expect(Object.keys(registry)).toEqual(['registerTool']);
+    expect('tool' in registry).toBe(false);
   });
 });

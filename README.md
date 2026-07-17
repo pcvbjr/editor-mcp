@@ -11,6 +11,8 @@ Editor MCP is a production-oriented, collaboration-first document mutation servi
 - [MCP deep dive](docs/mcp-deep-dive.md) — protocol research and reference
 - [MCP server bones](docs/mcp-server-bones-plan.md) — TDD plan and acceptance criteria for the
   stdio server shell
+- [Streamable HTTP transport](docs/streamable-http-plan.md) — standards-based transport architecture,
+  dependency decisions, security boundary, and TDD execution plan
 - [Original design narrative](docs/scratch/plan.md) — historical, non-normative context
 
 ## Development setup
@@ -54,6 +56,9 @@ pnpm --filter @editor-mcp/mcp-server test
 pnpm --filter @editor-mcp/mcp-server test:integration
 pnpm --filter @editor-mcp/mcp-server test:package
 pnpm --filter @editor-mcp/mcp-server start
+
+# local Streamable HTTP transport
+make mcp-http
 ```
 
 To inspect the compiled server manually:
@@ -64,6 +69,9 @@ make mcp-inspect
 
 Inspector should complete initialization and report the MCP app name and version. Product
 capabilities are not registered until the first product-capability slice is integrated.
+
+The local Streamable HTTP endpoint is `http://127.0.0.1:3000/mcp`. It is loopback-only and
+unauthenticated by design; authenticated public deployment is a separate future slice.
 
 ### Claude Desktop on macOS
 
