@@ -7,6 +7,8 @@ const probeInputSchema = z
   })
   .strict();
 
+type ProbeInput = z.infer<typeof probeInputSchema>;
+
 const probeOutputSchema = z
   .object({
     echo: z.string(),
@@ -20,7 +22,7 @@ export function registerProbeTool(server: McpServer, onCall: () => void): void {
       inputSchema: probeInputSchema,
       outputSchema: probeOutputSchema,
     },
-    ({ message }) => {
+    ({ message }: ProbeInput) => {
       onCall();
       const output = { echo: message };
       return {

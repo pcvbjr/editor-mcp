@@ -1,5 +1,12 @@
 import { z } from 'zod';
 
+export {
+  editorErrorCodeSchema,
+  editorErrorEnvelopeSchema,
+  type EditorErrorCode,
+  type EditorErrorEnvelope,
+} from './errors.js';
+
 const opaqueIdSchema = z.string().min(1).max(256);
 const blockIdSchema = z.uuid();
 const digestSchema = z.string().regex(/^sha256:[a-f0-9]{64}$/u);

@@ -526,9 +526,9 @@ After document transactions, normalize:
 
 Normalization must be deterministic and idempotent so repeated processing produces the same valid representation.
 
-## Error model
+## Internal diffing failure model
 
-Initial stable errors:
+Candidate internal failure reasons:
 
 ```text
 block_not_found
@@ -543,6 +543,10 @@ already_resolved
 incomplete_change_group
 duplicate_block_id
 ```
+
+These names are not public protocol codes. When this proposal is accepted and implemented, the
+application boundary must map each reason exhaustively to `editorErrorCodeSchema`; it must not
+publish a second error taxonomy.
 
 No validation error should leave part of a proposed change applied.
 

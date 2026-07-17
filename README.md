@@ -54,6 +54,7 @@ product tools, resources, or prompts yet.
 pnpm --filter @editor-mcp/mcp-server build
 pnpm --filter @editor-mcp/mcp-server test
 pnpm --filter @editor-mcp/mcp-server test:integration
+pnpm --filter @editor-mcp/mcp-server test:package
 pnpm --filter @editor-mcp/mcp-server start
 
 # local Streamable HTTP transport
@@ -71,3 +72,24 @@ capabilities are not registered until the first product-capability slice is inte
 
 The local Streamable HTTP endpoint is `http://127.0.0.1:3000/mcp`. It is loopback-only and
 unauthenticated by design; authenticated public deployment is a separate future slice.
+
+### Claude Desktop on macOS
+
+Build the server, then open Claude Desktop's **Settings → Developer → Edit Config** (or edit
+`~/Library/Application Support/Claude/claude_desktop_config.json` directly) and merge this server
+entry into the configuration:
+
+```json
+{
+  "mcpServers": {
+    "editor-mcp": {
+      "command": "/absolute/path/to/node",
+      "args": ["/absolute/path/to/editor-mcp/apps/mcp-server/dist/cli.js"]
+    }
+  }
+}
+```
+
+Use `command -v node` to find the Node.js path, replace both placeholders with absolute paths, and
+restart Claude Desktop. The server must reserve stdout for MCP messages; process diagnostics go to
+stderr.
