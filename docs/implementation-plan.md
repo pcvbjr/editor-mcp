@@ -93,6 +93,8 @@ Adapter scope:
 - `doc`, paragraphs, headings, blockquotes, lists, list items, code blocks, horizontal rules, hard breaks, and tables.
 - Bold, italic, strike, code, link, and `diffChange` marks.
 - Server-owned block IDs and tracking attributes.
+- Replacement identity semantics: `replace_block` retires the target ID and assigns fresh IDs to
+  the entire replacement subtree, while localized text and formatting edits retain block identity.
 - Strict HTML allowlist and canonical HTML/ProseMirror conversion.
 - Duplicate-ID, unsupported-content, invalid-nesting, and resource-limit rejection.
 - Yjs-backed `diffChanges` metadata through the adapter port.
@@ -116,7 +118,8 @@ Verification:
 1. Schema construction and capability manifest tests.
 2. Canonical ProseMirror JSON fixtures.
 3. HTML round-trip and lossy-parse rejection tests.
-4. Stable-ID lifecycle tests for insert, move, replace, split, join, copy, and type changes.
+4. Stable-ID lifecycle tests proving that localized edits and moves retain identity, while insert,
+   replace, copy, and type-change operations receive new server-owned IDs.
 5. Tracking mark, attribute, and metadata invariant tests.
 6. Fixture runner tests proving that accepted and rejected states are sibling derivations.
 
@@ -125,6 +128,8 @@ Exit criteria:
 - Supported fixtures round-trip losslessly at the semantic level.
 - Unsupported input fails without mutation.
 - Newly generated IDs are unique, server-owned, and stable across operation replay.
+- Every `replace_block`, including a same-type replacement, retires the target identity and reports
+  fresh IDs for its complete replacement subtree.
 - The `replace_block` fixture runs through the shared fixture kernel.
 
 ## Gate 2 — First production vertical slice
@@ -135,7 +140,7 @@ Scope:
 
 - Read document and bounded block projections.
 - `replace_block` with target digest preconditions.
-- Suggested and direct mutation modes.
+- Suggested mutation mode for agent calls; direct mode is reserved for human/service-controlled internal paths.
 - Proposal metadata and minimal accept/reject resolution.
 - Atomic transaction behavior.
 - Durable idempotency ledger interface and replay behavior.

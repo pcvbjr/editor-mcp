@@ -1,0 +1,29 @@
+{
+  "name": "@editor-mcp/document-service",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -b --pretty false"
+  },
+  "dependencies": {
+    "@editor-mcp/adapter-tiptap-hocuspocus": "workspace:*",
+    "@editor-mcp/core": "workspace:*",
+    "@editor-mcp/protocol": "workspace:*",
+    "@editor-mcp/runtime-hocuspocus": "workspace:*",
+    "@tiptap/pm": "3.28.0"
+  },
+  "devDependencies": {
+    "@editor-mcp/fixtures": "workspace:*",
+    "@types/node": "^22.0.0",
+    "typescript": "^6.0.0",
+    "vitest": "^4.0.0"
+  }
+}

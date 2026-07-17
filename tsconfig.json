@@ -1,15 +1,16 @@
 {
   "$schema": "https://json.schemastore.org/tsconfig",
   "extends": "./tsconfig.base.json",
-  "compilerOptions": {
-    "noEmit": true,
-    "types": ["node"]
-  },
-  "include": [
-    "apps/**/*.ts",
-    "packages/**/*.ts",
-    "examples/**/*.ts",
-    "test/**/*.ts",
-    "vitest.config.ts"
+  "files": [],
+  "references": [
+    { "path": "./packages/protocol" },
+    { "path": "./packages/adapter-tiptap-hocuspocus" },
+    { "path": "./packages/fixtures" },
+    { "path": "./packages/core" },
+    { "path": "./packages/runtime-hocuspocus" },
+    { "path": "./packages/document-service" },
+    { "path": "./apps/mcp-server" },
+    { "path": "./apps/reference-server" },
+    { "path": "./apps/visual-test-harness" }
   ]
 }

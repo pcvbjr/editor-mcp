@@ -21,6 +21,7 @@
     "allowUnusedLabels": false,
     "forceConsistentCasingInFileNames": true,
     "skipLibCheck": true,
+    "composite": true,
     "noEmitOnError": true,
     "declaration": true,
     "declarationMap": true,
