@@ -1,10 +1,10 @@
 # Editor MCP Production Implementation Plan
 
 **Status:** Active
-**Approach:** Test-driven, production path from the first vertical slice
+**Approach:** Test-driven delivery through a production vertical slice, followed by parallel domain, runtime, UI, and transport workstreams.
 **Normative design:** [architecture.md](architecture.md), [mvp-schema.md](mvp-schema.md), and [diffing-plan.md](diffing-plan.md)
 
-This is the consolidated delivery plan. Every phase produces working, tested production code. There is no disposable spike track: technical experiments belong inside the phase that will ship the resulting capability.
+This plan is organized around integration gates rather than a strictly serial list of features. Every gate must produce working, tested production code. Workstreams may proceed in parallel after their stated contracts are stable.
 
 ## Current baseline
 
@@ -22,95 +22,176 @@ The current baseline passes `pnpm run check`.
 
 - Write a failing test before implementing each behavior.
 - Keep the semantic mutation core independent of MCP, HTTP, and Tiptap UI concerns.
-- Treat Hocuspocus/Yjs as authoritative from the first mutation phase.
+- Treat the authoritative Y.Doc as the source of collaborative state from the first production vertical slice.
 - Keep resolution-critical change metadata collaborative and durable.
 - Let clients decide how tracked changes look; the service exposes synchronized semantic state and resolution commands.
 - Use deterministic fixtures across unit, REST, collaboration, persistence, and browser tests.
 - Do not broaden the MVP schema without a capability, fixture, and migration decision.
-- A phase is complete only when its exit criteria pass in a clean checkout.
+- A phase or workstream is complete only when its exit criteria pass in a clean checkout.
+- Replayed operations return the original generated IDs and result. ID generation itself remains server-owned and opaque.
 
-## Phase 1 — MVP schema and adapter
+## Dependency graph
 
-Build the certified Tiptap/ProseMirror adapter:
+```text
+Gate 0: contracts and package boundaries
+              |
+              v
+Gate 1: certified adapter + executable fixture kernel
+              |
+              v
+Gate 2: replace_block production vertical slice
+              |
+       +------+-------+--------+---------+
+       |              |        |         |
+       v              v        v         v
+   Domain         Review    Runtime   Browser
+   surface       semantics  hardening harness
+       |              |        |         |
+       +--------------+--------+---------+
+              |
+              v
+       Transport integration
+       REST + local MCP in parallel
+       remote MCP after auth/runtime contracts
+              |
+              v
+       Gate 3: release hardening
+```
+
+## Gate 0 — Contract freeze and package boundaries
+
+Define the seams that allow the implementation workstreams to proceed independently.
+
+Deliverables:
+
+- Document identity: tenant, document, incarnation, collaboration field, schema ID, and schema version.
+- Adapter ports for schema construction, canonical projections, stable IDs, transactions, and Yjs metadata.
+- Versioned operation, result, conflict, audit, and persistence-acknowledgement contracts.
+- Idempotency scope and replay rules.
+- Change metadata lifecycle: proposed, pending, accepted, rejected, grouped, and resolved.
+- Authorization context and operation policy hooks.
+- Shared fixture type, seed, expected-state, and invariant contracts.
+- Package boundaries for protocol, domain, adapter, runtime, fixture catalog, browser harness, REST, and MCP.
+
+Verification:
+
+- Contract tests cover valid, invalid, stale, duplicate, mismatched, and unsupported requests.
+- Domain packages do not import MCP, HTTP, browser, or UI packages.
+- Every contract has an explicit version and compatibility policy.
+
+Exit criteria:
+
+- The first vertical slice can be implemented without inventing transport-specific behavior.
+- The fixture format can be consumed by unit tests and browser tests without adapters to test code.
+
+## Gate 1 — Certified adapter and executable fixture kernel
+
+Build the schema and the smallest shared fixture runner.
+
+Adapter scope:
 
 - `doc`, paragraphs, headings, blockquotes, lists, list items, code blocks, horizontal rules, hard breaks, and tables.
 - Bold, italic, strike, code, link, and `diffChange` marks.
-- Stable server-owned block IDs and tracking attributes.
+- Server-owned block IDs and tracking attributes.
 - Strict HTML allowlist and canonical HTML/ProseMirror conversion.
 - Duplicate-ID, unsupported-content, invalid-nesting, and resource-limit rejection.
-- Yjs-backed `diffChanges` metadata.
+- Yjs-backed `diffChanges` metadata through the adapter port.
 
-TDD order:
+Fixture kernel scope:
+
+- Initial canonical document.
+- One semantic operation or batch.
+- Expected proposed document and tracking state.
+- Expected accepted and rejected documents.
+- Expected conflicts and invariants.
+- Deterministic seed and schema version.
+- Independent materialization of accepted and rejected states from proposed state.
+
+Initial certified fixture:
+
+- One `replace_block` operation with a target digest, suggested-change mode, inline or block tracking as appropriate, and expected accept/reject projections.
+
+Verification:
 
 1. Schema construction and capability manifest tests.
 2. Canonical ProseMirror JSON fixtures.
 3. HTML round-trip and lossy-parse rejection tests.
 4. Stable-ID lifecycle tests for insert, move, replace, split, join, copy, and type changes.
-5. Tracking mark/attribute and metadata invariants.
+5. Tracking mark, attribute, and metadata invariant tests.
+6. Fixture runner tests proving that accepted and rejected states are sibling derivations.
 
 Exit criteria:
 
-- Every supported fixture parses and serializes losslessly at the semantic level.
+- Supported fixtures round-trip losslessly at the semantic level.
 - Unsupported input fails without mutation.
-- All generated IDs are unique, server-owned, and deterministic under replay.
+- Newly generated IDs are unique, server-owned, and stable across operation replay.
+- The `replace_block` fixture runs through the shared fixture kernel.
 
-## Phase 2 — Shared executable fixtures and visual harness
+## Gate 2 — First production vertical slice
 
-Create one fixture system consumed by all test layers. Each fixture contains:
+Implement one complete operation against authoritative collaborative state before expanding the operation surface.
 
-- Initial canonical document.
-- Semantic operation or batch.
-- Expected proposed document and tracking state.
-- Expected accepted document.
-- Expected rejected document.
-- Expected conflicts and invariants.
-
-Expose every fixture through a browser page with four independent editors:
-
-```text
-before → proposed
-             ├── accepted
-             └── rejected
-```
-
-The harness supports fixture filtering, direct fixture URLs, operation details, assertion status, schema version, and reproducible seeds. Accepted and rejected states are always derived independently from proposed state.
-
-Exit criteria:
-
-- The same fixture drives automated and visual verification.
-- The initial page covers text replacement, insertion, deletion, lists, nesting, headings, and tables.
-- Browser state agrees with canonical JSON and clean projections.
-
-## Phase 3 — Mutation core
-
-Implement framework-neutral semantic mutation use cases:
+Scope:
 
 - Read document and bounded block projections.
-- `insert_before`, `insert_after`, `replace_block`, and `delete_block`.
-- Localized text insert/delete/replace.
-- Structured table row and column operations.
-- Atomic multi-operation batches.
-- Target digest preconditions and structured conflict results.
-- Durable idempotency ledger and replay behavior.
-- Operation provenance and audit envelope.
+- `replace_block` with target digest preconditions.
+- Suggested and direct mutation modes.
+- Proposal metadata and minimal accept/reject resolution.
+- Atomic transaction behavior.
+- Durable idempotency ledger interface and replay behavior.
+- A real Hocuspocus/Yjs document lifecycle for the slice.
+- Two synchronized clients, one agent mutation, persistence, unload, and reload.
 
-TDD order:
+Verification:
 
-1. Operation planning tests against immutable document fixtures.
-2. Schema-valid transaction tests.
-3. Stale-target, missing-target, ambiguous-target, and schema-mismatch tests.
-4. Atomicity tests proving no partial batch mutation.
-5. Idempotency tests for duplicate, concurrent, and mismatched retries.
+- Unit tests against immutable fixtures.
+- Schema-valid transaction tests.
+- Stale-target, missing-target, schema-mismatch, and unsupported-content tests.
+- Atomicity tests proving no partial mutation.
+- Duplicate, concurrent, and mismatched idempotency tests.
+- Two-client convergence and persistence/reload tests.
+- One browser route showing before, proposed, accepted, and rejected states.
 
 Exit criteria:
+
+- Acknowledged `replace_block` changes survive unload and reload.
+- All clients converge to identical semantic state.
+- Rejected operations leave the document unchanged.
+- Replays return the original result and have one semantic effect.
+- Persistence failure cannot produce a false success.
+- The first fixture passes schema, tracking, canonicalization, collaboration, and visual-state assertions.
+
+## Parallel workstreams after Gate 2
+
+The following workstreams may proceed concurrently. Each must use the contracts and fixture catalog established by Gates 0–2.
+
+### Workstream A — Complete semantic mutation surface
+
+Implement framework-neutral mutation use cases:
+
+- `insert_before`, `insert_after`, and `delete_block`.
+- Localized text insert, delete, replace, and format operations.
+- Structured table row and column operations.
+- Atomic multi-operation batches.
+- Target digest preconditions and structured conflict recovery metadata.
+- Operation provenance and audit envelopes.
+
+Verification:
 
 - Every accepted operation changes only intended targets and required ancestors.
 - Every rejected operation leaves the document unchanged.
-- Replays have one semantic effect and return the original result.
+- Generated documents and property-based cases remain schema-valid.
+- Batch failures prove no partial mutation.
+- Each operation and edge case has a shared executable fixture.
 
-## Phase 4 — Review resolution
+Exit criteria:
 
-Implement server-side tracked-change semantics without prescribing client visuals:
+- All MVP operations in [mvp-schema.md](mvp-schema.md) have unit, integration, conflict, idempotency, and fixture coverage.
+- Direct mutation-core results are deterministic and transport-independent.
+
+### Workstream B — Complete review and resolution semantics
+
+Expand the minimal review behavior:
 
 - Create and group change segments.
 - Preserve proposed deletions until resolution.
@@ -119,35 +200,66 @@ Implement server-side tracked-change semantics without prescribing client visual
 - Serialize conflicting accept/reject commands.
 - Keep resolution-critical metadata synchronized in Yjs.
 - Return semantic change state for clients to render.
+- Defer standalone formatting-only suggestions until text, block, and table resolution is stable.
 
-Defer standalone formatting-only suggestions until text, block, and table resolution is stable. Formatted replacement content remains supported.
+Verification:
 
-Exit criteria:
-
-- Accept and reject produce the expected clean documents from independent proposed copies.
-- Concurrent clients converge after proposal and resolution.
+- Independent proposed copies produce the expected clean documents on accept and reject.
+- Conflicting resolution commands have deterministic outcomes.
 - Pending metadata survives persistence and reload.
 - No client decoration is required for correctness or resolution.
 
-## Phase 5 — Hocuspocus/Yjs production runtime
+Exit criteria:
 
-Integrate the mutation core with the authoritative collaboration runtime:
+- Every supported change kind has proposal, accept, reject, replay, conflict, and persistence fixtures.
+- Concurrent proposal and resolution tests converge across clients.
+
+### Workstream C — Runtime, durability, and collaboration hardening
+
+Harden the production Hocuspocus/Yjs integration introduced in Gate 2:
 
 - Long-lived Hocuspocus service and direct document access.
 - Yjs persistence and recovery journal/snapshots.
 - Explicit transaction origins for agent, human, and resolution mutations.
-- Two or more synchronized clients plus agent mutations.
 - Reconnect, offline/stale state, duplicate delivery, and reload tests.
 - Persistence acknowledgement before mutation success is returned.
+- Cross-document, cross-tenant, and document-incarnation isolation.
+
+Verification:
+
+- Controlled persistence failures, delayed acknowledgements, reloads, and recovery drills.
+- Duplicate and reordered update tests.
+- Two or more synchronized clients plus agent mutations.
+- Isolation tests across tenants, documents, schemas, and incarnations.
 
 Exit criteria:
 
 - All connected clients converge to identical semantic state.
 - Acknowledged changes survive unload and reload.
 - Persistence failure cannot produce a false success.
-- Cross-document and cross-tenant state cannot leak.
+- Recovery restores the last acknowledged semantic state.
 
-## Phase 6 — REST sidecar
+### Workstream D — Shared fixture browser and visual harness
+
+Build the browser-visible verification surface on the shared fixture catalog:
+
+- Four independent editors: `before`, `proposed`, `accepted`, and `rejected`.
+- Fixture filtering, direct fixture URLs, operation details, assertion status, schema version, and reproducible seeds.
+- Canonical JSON, clean projections, tracking metadata, and schema-validity assertions in the page.
+- Visual regression routes for supported blocks, lists, nesting, headings, tables, and edge cases.
+
+Verification:
+
+- Browser state agrees with canonical JSON and clean projections.
+- Accepted and rejected states are never produced by sequentially mutating the same editor.
+- Every certified fixture is reachable by a deterministic URL.
+
+Exit criteria:
+
+- The same fixture drives unit, REST, collaboration, persistence, and browser verification.
+- Visual inspection supplements, but does not replace, semantic assertions.
+
+### Workstream E — REST sidecar
 
 Expose the production domain through HTTP:
 
@@ -157,46 +269,55 @@ Expose the production domain through HTTP:
 - Durable audit and acknowledgement levels.
 - REST contract tests using the shared fixture catalog.
 
-Exit criteria:
+Verification and exit criteria:
 
 - REST results match direct mutation-core results.
-- Invalid, stale, duplicate, unauthorized, and oversized requests fail safely.
+- Invalid, stale, duplicate, unauthorized, oversized, cancelled, and timed-out requests fail safely.
+- Persistence acknowledgement semantics are preserved across HTTP.
 - Sidecar tests expose before/proposed/accepted/rejected fixture states.
 
-## Phase 7 — MCP adapter
+### Workstream F — MCP adapters
 
-Add the thin agent-facing adapter:
+Implement the thin agent-facing adapter independently of domain semantics:
 
 - `editor.document.read.v1`.
 - `editor.document.apply_edits.v1`.
 - Bounded resources for outlines and blocks.
 - Local stdio transport first.
-- Streamable HTTP transport after domain and REST behavior is stable.
+- Streamable HTTP transport after remote authentication and runtime contracts are stable.
 - MCP Inspector and protocol conformance tests.
 
-Exit criteria:
+The local stdio adapter may proceed in parallel with Workstreams C–E once the domain contracts are stable. Remote Streamable HTTP belongs in the final integration lane because it depends on authentication, authorization, cancellation, and operational policy.
+
+Verification and exit criteria:
 
 - MCP calls map one-to-one to domain outcomes.
 - Tool schemas prevent unsupported or unsafe inputs.
 - Agents receive concise conflict and retry guidance without whole-document echoes.
+- Protocol behavior, transport lifecycle, cancellation, and error mapping pass conformance tests.
 
-## Phase 8 — Demo and release hardening
+## Gate 3 — Integration, demo, and release hardening
 
-Build the finished demonstration on the same production packages:
+Join all completed workstreams on the production packages.
+
+Scope:
 
 - Agent panel that reads and submits semantic edits.
 - Multiple synchronized editor clients.
 - Fixture browser and visual regression routes.
 - Visible collaboration, proposal, accept, and reject flows.
-- Browser end-to-end tests, load tests, failure injection, recovery drills, and runbooks.
+- Browser end-to-end tests.
+- Load tests, failure injection, recovery drills, rollback tests, and runbooks.
+- Remote MCP authentication and operational deployment checks.
 
 Release criteria:
 
 - `pnpm run check` passes in a clean checkout.
 - Unit, contract, integration, convergence, persistence, REST, MCP, and browser suites pass.
-- Supported schema and protocol versions are documented.
-- Operational limits, authorization, audit, recovery, and rollback behavior are tested.
+- Every supported schema and protocol version is documented.
+- Operational limits, authorization, audit, recovery, persistence acknowledgement, and rollback behavior are tested.
+- No transport bypasses the mutation core or authoritative collaboration runtime.
 
 ## Immediate next task
 
-Implement Phase 1 schema construction and Phase 2 fixture types together, starting with one `replace_block` fixture. Do not add more semantic operations until that fixture passes schema, tracking, canonicalization, and visual-state assertions.
+Implement Gate 0 contracts and Gate 1 adapter/fixture-kernel work together for one `replace_block` fixture. Include minimal proposal, accept, and reject projections so Gate 2 can exercise a complete vertical slice. Do not expand the semantic operation set until that fixture passes schema, tracking, canonicalization, idempotency, collaboration, persistence, and visual-state assertions.
