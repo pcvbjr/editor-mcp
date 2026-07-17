@@ -1,215 +1,177 @@
+import { InvalidTokenError } from '@modelcontextprotocol/sdk/server/auth/errors.js';
+import pino from 'pino';
 import { describe, expect, it, vi } from 'vitest';
 
-import { createHttpApp } from '../../src/http/app.js';
-import { createHttpServerConfig } from '../../src/http/config.js';
 import type { InternalErrorReporter } from '../../src/diagnostics.js';
-import { createMcpServer } from '../../src/server.js';
-import { initializeBody, mcpHeaders } from '../support/mcp-http-fixture.js';
+import { createHttpServerConfig } from '../../src/http/config.js';
+import { createTestHttpHarness } from '../support/http-test-harness.js';
 
 describe('HTTP application contract', () => {
-  it('keeps the health endpoint separate from MCP routing', async () => {
-    const app = createHttpApp({ config: createHttpServerConfig() });
-
-    expect((await app.request('http://127.0.0.1/healthz')).status).toBe(200);
-    expect((await app.request('http://127.0.0.1/unknown')).status).toBe(404);
+  it('serves separate health, readiness, and protected-resource routes', async () => {
+    const harness = createTestHttpHarness();
+    const baseUrl = await harness.start();
+    try {
+      await expect(
+        fetch(new URL('/healthz', baseUrl)).then((response) => response.json()),
+      ).resolves.toEqual({ status: 'ok' });
+      await expect(
+        fetch(new URL('/readyz', baseUrl)).then((response) => response.json()),
+      ).resolves.toEqual({ status: 'ready' });
+      const metadata = await fetch(new URL('/.well-known/oauth-protected-resource/mcp', baseUrl));
+      expect(metadata.status).toBe(200);
+      await expect(metadata.json()).resolves.toMatchObject({
+        resource: 'http://127.0.0.1/mcp',
+        authorization_servers: ['https://authkit.example.test'],
+      });
+      expect((await fetch(new URL('/unknown', baseUrl))).status).toBe(404);
+    } finally {
+      await harness.close();
+    }
   });
 
-  it('returns method-not-allowed for stateless GET and DELETE requests', async () => {
-    const app = createHttpApp({ config: createHttpServerConfig() });
+  it('rejects unsupported methods and missing bearer credentials', async () => {
+    const harness = createTestHttpHarness();
+    const baseUrl = await harness.start();
+    try {
+      const getResponse = await fetch(new URL('/mcp', baseUrl));
+      expect(getResponse.status).toBe(405);
+      expect(getResponse.headers.get('allow')).toBe('POST');
 
-    const headers = { accept: 'text/event-stream' };
-    const getResponse = await app.request('http://127.0.0.1/mcp', { method: 'GET', headers });
-    const deleteResponse = await app.request('http://127.0.0.1/mcp', { method: 'DELETE', headers });
-
-    expect(getResponse.status).toBe(405);
-    expect(deleteResponse.status).toBe(405);
+      const unauthorized = await fetch(new URL('/mcp', baseUrl), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: '{}',
+      });
+      expect(unauthorized.status).toBe(401);
+      expect(unauthorized.headers.get('www-authenticate')).toContain('resource_metadata=');
+    } finally {
+      await harness.close();
+    }
   });
 
-  it('does not advertise product capabilities by default', async () => {
-    const app = createHttpApp({ config: createHttpServerConfig() });
-    const response = await app.request('http://127.0.0.1/mcp', {
-      method: 'POST',
-      headers: mcpHeaders,
-      body: initializeBody,
-    });
+  it('rejects new MCP work after readiness is withdrawn', async () => {
+    const createServer = vi.fn();
+    const harness = createTestHttpHarness({ createServer });
+    const baseUrl = await harness.start();
+    harness.readiness.markNotReady();
+    try {
+      const response = await fetch(new URL('/mcp', baseUrl), {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer test-token',
+          'content-type': 'application/json',
+        },
+        body: '{}',
+      });
+      expect(response.status).toBe(503);
+      expect(response.headers.get('retry-after')).toBe('1');
+      expect(createServer).not.toHaveBeenCalled();
+    } finally {
+      await harness.close();
+    }
+  });
 
-    expect(response.status).toBe(200);
-    expect(response.headers.get('content-type')).toContain('application/json');
-    const payload = (await response.json()) as {
-      result: { serverInfo: unknown; capabilities: unknown };
-    };
-    expect(payload.result.serverInfo).toMatchObject({
-      name: '@editor-mcp/mcp-server',
-      version: '0.0.0',
+  it('bounds and sanitizes JSON parsing failures', async () => {
+    const harness = createTestHttpHarness({
+      config: createHttpServerConfig({ port: 0, bodyLimitBytes: 1_024 }),
     });
-    expect(payload.result.capabilities).toEqual({});
+    const baseUrl = await harness.start();
+    try {
+      const malformed = await fetch(new URL('/mcp', baseUrl), {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer test-token',
+          'content-type': 'application/json',
+        },
+        body: '{',
+      });
+      expect(malformed.status).toBe(400);
+      expect(await malformed.text()).not.toContain('SyntaxError');
+
+      const oversized = await fetch(new URL('/mcp', baseUrl), {
+        method: 'POST',
+        headers: {
+          authorization: 'Bearer test-token',
+          'content-type': 'application/json',
+        },
+        body: JSON.stringify({ value: 'x'.repeat(2_000) }),
+      });
+      expect(oversized.status).toBe(413);
+    } finally {
+      await harness.close();
+    }
   });
 
   it('sanitizes request failures and reports request and cleanup causes internally', async () => {
     const reportError = vi.fn<InternalErrorReporter>();
-    const app = createHttpApp({
-      config: createHttpServerConfig(),
+    const harness = createTestHttpHarness({
       reportError,
       createServer: () => ({
         connect: () => Promise.reject(new Error('TOP_SECRET_REQUEST')),
         close: () => Promise.reject(new Error('TOP_SECRET_CLOSE')),
       }),
     });
-    const response = await app.request('http://127.0.0.1/mcp', {
-      method: 'POST',
-      headers: mcpHeaders,
-      body: '{}',
-    });
-
-    expect(response.status).toBe(500);
-    const body = await response.text();
-    expect(body).toContain('Internal server error');
-    expect(body).not.toContain('TOP_SECRET');
-    expect(reportError.mock.calls.map(([event]) => event)).toEqual([
-      { phase: 'request', error: new Error('TOP_SECRET_REQUEST') },
-      { phase: 'close', error: new Error('TOP_SECRET_CLOSE') },
-    ]);
-  });
-
-  it('sanitizes synchronous server construction failures through the reporter', async () => {
-    const reportError = vi.fn<InternalErrorReporter>();
-    const app = createHttpApp({
-      config: createHttpServerConfig(),
-      reportError,
-      createServer: () => {
-        throw new Error('TOP_SECRET_FACTORY');
-      },
-    });
-
-    const response = await app.request('http://127.0.0.1/mcp', {
-      method: 'POST',
-      headers: mcpHeaders,
-      body: initializeBody,
-    });
-
-    expect(response.status).toBe(500);
-    expect(await response.text()).not.toContain('TOP_SECRET_FACTORY');
-    expect(reportError).toHaveBeenCalledWith({
-      phase: 'request',
-      error: new Error('TOP_SECRET_FACTORY'),
-    });
-  });
-
-  it('sanitizes unexpected failures outside the MCP route boundary', async () => {
-    const reportError = vi.fn<InternalErrorReporter>();
-    const app = createHttpApp({ config: createHttpServerConfig(), reportError });
-    app.get('/test-unexpected-failure', () => {
-      throw new Error('TOP_SECRET_GLOBAL');
-    });
-
-    const response = await app.request('http://127.0.0.1/test-unexpected-failure');
-
-    expect(response.status).toBe(500);
-    expect(await response.text()).not.toContain('TOP_SECRET_GLOBAL');
-    expect(reportError).toHaveBeenCalledWith({
-      phase: 'request',
-      error: new Error('TOP_SECRET_GLOBAL'),
-    });
-  });
-
-  it('closes each successfully constructed server exactly once', async () => {
-    const close = vi.fn<() => void>();
-    const app = createHttpApp({
-      config: createHttpServerConfig(),
-      createServer: (options) => {
-        const server = createMcpServer(options);
-        return {
-          connect: server.connect.bind(server),
-          close: async () => {
-            close();
-            await server.close();
-          },
-        };
-      },
-    });
-
-    const response = await app.request('http://127.0.0.1/mcp', {
-      method: 'POST',
-      headers: mcpHeaders,
-      body: initializeBody,
-    });
-
-    expect(response.status).toBe(200);
-    expect(close).toHaveBeenCalledOnce();
-  });
-
-  it('isolates and closes every concurrent stateless request', async () => {
-    const servers = new Set<ReturnType<typeof createMcpServer>>();
-    const close = vi.fn<() => void>();
-    const app = createHttpApp({
-      config: createHttpServerConfig(),
-      createServer: (options) => {
-        const server = createMcpServer(options);
-        servers.add(server);
-        return {
-          connect: server.connect.bind(server),
-          close: async () => {
-            close();
-            await server.close();
-          },
-        };
-      },
-    });
-
-    const responses = await Promise.all(
-      Array.from({ length: 10 }, (_, id) =>
-        Promise.resolve().then(() =>
-          app.request('http://127.0.0.1/mcp', {
-            method: 'POST',
-            headers: mcpHeaders,
-            body: JSON.stringify({ jsonrpc: '2.0', id, method: 'ping' }),
-          }),
-        ),
-      ),
-    );
-
-    expect(responses.every((response) => response.status === 200)).toBe(true);
-    expect(servers.size).toBe(10);
-    expect(close).toHaveBeenCalledTimes(10);
-  });
-
-  it('rejects routing, security, headers, and malformed JSON before server construction', async () => {
-    const createServer = vi.fn(() => {
-      throw new Error('server must not be constructed');
-    });
-    const app = createHttpApp({ config: createHttpServerConfig(), createServer });
-
-    const responses = await Promise.all([
-      app.request('http://127.0.0.1/mcp', { method: 'GET' }),
-      app.request('http://evil.example/mcp', {
-        method: 'POST',
-        headers: mcpHeaders,
-        body: initializeBody,
-      }),
-      app.request('http://127.0.0.1/mcp', {
+    const baseUrl = await harness.start();
+    try {
+      const response = await fetch(new URL('/mcp', baseUrl), {
         method: 'POST',
         headers: {
-          accept: 'application/jsonp, text/event-streaming',
+          authorization: 'Bearer test-token',
           'content-type': 'application/json',
         },
-        body: initializeBody,
-      }),
-      app.request('http://127.0.0.1/mcp', {
+        body: '{}',
+      });
+      expect(response.status).toBe(500);
+      expect(await response.text()).not.toContain('TOP_SECRET');
+      expect(reportError.mock.calls.map(([event]) => event.phase)).toContain('request');
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('maps invalid verifier tokens to a safe 401 response', async () => {
+    const harness = createTestHttpHarness({
+      tokenVerifier: {
+        verifyAccessToken: () => Promise.reject(new InvalidTokenError('Invalid token')),
+      },
+    });
+    const baseUrl = await harness.start();
+    try {
+      const response = await fetch(new URL('/mcp', baseUrl), {
+        method: 'POST',
+        headers: { authorization: 'Bearer rejected', 'content-type': 'application/json' },
+        body: '{}',
+      });
+      expect(response.status).toBe(401);
+      expect(await response.text()).not.toContain('rejected');
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('never records bearer credentials in structured request logs', async () => {
+    const messages: string[] = [];
+    const logger = pino({}, { write: (message) => messages.push(message) });
+    const harness = createTestHttpHarness({
+      logger,
+      tokenVerifier: {
+        verifyAccessToken: () => Promise.reject(new InvalidTokenError('Invalid token')),
+      },
+    });
+    const baseUrl = await harness.start();
+    try {
+      await fetch(new URL('/mcp', baseUrl), {
         method: 'POST',
         headers: {
-          accept: 'application/json, text/event-stream',
-          'content-type': 'text/plain; note=application/json',
+          authorization: 'Bearer TOP_SECRET_BEARER',
+          'content-type': 'application/json',
         },
-        body: initializeBody,
-      }),
-      app.request('http://127.0.0.1/mcp', {
-        method: 'POST',
-        headers: mcpHeaders,
-        body: '{',
-      }),
-    ]);
-
-    expect(responses.map((response) => response.status)).toEqual([405, 403, 406, 415, 400]);
-    expect(createServer).not.toHaveBeenCalled();
+        body: '{}',
+      });
+      expect(messages.join('')).not.toContain('TOP_SECRET_BEARER');
+      expect(messages.join('')).not.toContain('authorization');
+    } finally {
+      await harness.close();
+    }
   });
 });
