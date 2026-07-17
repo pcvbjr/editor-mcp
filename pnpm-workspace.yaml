@@ -3,5 +3,8 @@ packages:
   - packages/*
   - examples/*
 
+nodeVersion: 22.13.0
+disallowWorkspaceCycles: true
+
 allowBuilds:
   esbuild: true

@@ -187,6 +187,15 @@ Implementation requirements:
 - Pasting marked content into an unrelated location must strip the diff mark by default.
 - The adapter must prevent or normalize text that simultaneously represents incompatible change kinds.
 
+### Inline code compatibility
+
+StarterKit's `code` mark excludes every other mark, so it cannot coexist with `diffChange` as
+currently proposed. This must be resolved before implementation by either replacing the bundled
+Code extension with a deliberately configured compatible mark, or defining a non-mark tracking
+strategy for inline-code ranges. The chosen approach must preserve code semantics and must never
+silently strip either mark. If Code is replaced, disable StarterKit's bundled Code extension to
+avoid duplicate extension names.
+
 ## Block attributes
 
 Configured block and atom nodes receive two optional attributes:

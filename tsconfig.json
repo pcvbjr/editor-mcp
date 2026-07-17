@@ -3,7 +3,7 @@
   "extends": "./tsconfig.base.json",
   "compilerOptions": {
     "noEmit": true,
-    "types": ["node", "vitest/globals"]
+    "types": ["node"]
   },
   "include": [
     "apps/**/*.ts",

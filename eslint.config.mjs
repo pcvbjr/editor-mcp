@@ -8,7 +8,7 @@ const typedFiles = ['**/*.ts', '**/*.tsx'];
 
 export default tseslint.config(
   {
-    ignores: ['coverage/**', 'dist/**', 'node_modules/**'],
+    ignores: ['**/coverage/**', '**/dist/**', '**/node_modules/**'],
   },
   eslint.configs.recommended,
   ...tseslint.configs.strictTypeChecked.map((config) => ({
