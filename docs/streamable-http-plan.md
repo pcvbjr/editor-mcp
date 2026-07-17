@@ -428,11 +428,13 @@ Document one vendor-neutral smoke test first:
 
 ```sh
 make mcp-http
-pnpm exec mcp-inspector --transport streamable-http http://127.0.0.1:3000/mcp
+pnpm exec mcp-inspector --cli http://127.0.0.1:3000/mcp --transport http --method tools/list
 ```
 
-Confirm the current Inspector CLI syntax during implementation rather than freezing an assumed flag in
-the Makefile. Also document minimal examples for clients that already support Streamable HTTP, such as:
+The pinned Inspector CLI uses the URL as its positional target. The current shell advertises no product
+tools, so `tools/list` may correctly return MCP `Method not found` after the transport handshake; use the
+Inspector UI or a temporary test registrar to inspect a capability. Also document minimal examples for
+clients that already support Streamable HTTP, such as:
 
 ```toml
 [mcp_servers.editor_mcp]
