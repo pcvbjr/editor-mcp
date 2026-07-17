@@ -11,6 +11,8 @@ Editor MCP is a production-oriented, collaboration-first document mutation servi
 - [MCP deep dive](docs/mcp-deep-dive.md) — protocol research and reference
 - [MCP server bones](docs/mcp-server-bones-plan.md) — TDD plan and acceptance criteria for the
   stdio server shell
+- [Streamable HTTP transport](docs/streamable-http-plan.md) — standards-based transport architecture,
+  dependency decisions, security boundary, and TDD execution plan
 - [Original design narrative](docs/scratch/plan.md) — historical, non-normative context
 
 ## Development setup
