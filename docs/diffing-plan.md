@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed standalone implementation plan. Real-time collaboration is deferred.
+Proposed production implementation plan. Real-time collaboration is required.
 
 ## Summary
 
@@ -17,7 +17,7 @@ The durable diff representation will be part of the ProseMirror document:
 
 The MCP will produce semantic edit operations. A companion Tiptap extension will translate those operations into schema-valid ProseMirror transactions.
 
-The initial release targets one authoritative editor state. Yjs synchronization, offline merging, and concurrent accept/reject behavior are deferred. The representation remains compatible with collaboration later because diff identity is stored in marks and node attributes rather than editor positions.
+The initial release targets an authoritative Hocuspocus/Yjs document with multiple synchronized clients. Diff identity and resolution-critical metadata are collaborative state, stored in marks, node attributes, and a Yjs-backed metadata structure rather than editor positions.
 
 ## Goals
 
@@ -35,7 +35,7 @@ The initial release targets one authoritative editor state. Yjs synchronization,
 - Reconstructing arbitrary historical diffs.
 - Replacing the application's version-history system.
 - Supporting an unknown custom ProseMirror schema without a capability handshake or configuration.
-- Real-time collaboration, offline merging, and multi-client conflict resolution in the first release.
+- Prescribing client-side visual treatment, decorations, controls, gutters, or review UI.
 - Providing a tamper-proof compliance audit log.
 - Reusing Tiptap's existing diffing extension.
 - Allowing arbitrary overlapping or recursively nested pending changes in the first version.
@@ -210,7 +210,7 @@ The final DOM naming is an implementation detail. The stable contract is the Pro
 
 ## Change metadata
 
-The extension will maintain a metadata store named `diffChanges`. Each `changeId` maps to a record with fields similar to:
+The extension will maintain a collaborative metadata store named `diffChanges`. Each `changeId` maps to a record with fields similar to:
 
 ```text
 id
@@ -228,11 +228,11 @@ baseBlockId
 
 Formatting changes may additionally store the previous and proposed formatting required to accept or reject the operation.
 
-The store may be backed by extension storage, application state, or a database. The document mark or node attribute should contain only the stable change identifier and kind. Mutable metadata should not be duplicated across every marked segment.
+Resolution-critical metadata is stored in a Yjs shared map associated with the collaborative document. The document mark or node attribute contains only the stable change identifier and kind. Mutable metadata is not duplicated across every marked segment.
 
 The core diff remains understandable if optional metadata is unavailable: `changeId` and `kind` are sufficient to render and resolve it. If a product requires immutable auditing, the sidecar must also write proposal and resolution events to an external append-only store.
 
-When collaboration is added later, the metadata-store interface can be backed by a Yjs shared map without changing the mark or node-attribute representation.
+Display-only metadata may be enriched by the host application. Compliance-grade proposal and resolution events remain in an external append-only audit store.
 
 ## Semantic operation model
 
@@ -345,19 +345,19 @@ Resolution requirements:
 - Return `already_resolved` when the target change is no longer pending.
 - Return a stable result for repeated requests with the same idempotency key.
 
-## Collaboration and concurrency — deferred
+## Collaboration and concurrency
 
-The initial release assumes one authoritative editor state while a diff command is applied. It does not synchronize pending changes between sessions and does not resolve simultaneous accept/reject actions.
+The initial release synchronizes document content and pending-change metadata through Yjs/Hocuspocus. It must:
 
-The document model is intentionally suitable for a later collaborative implementation:
-
-- Diff identity is attached to content rather than absolute positions.
-- Proposed deletions remain live document content.
-- Change metadata is accessed through a replaceable store interface.
-- Commands are deterministic and idempotent.
-- Grouped changes resolve in one ProseMirror transaction.
-
-Future collaboration work will add Yjs-backed metadata, transaction origins, multi-client normalization, offline testing, and serialized accept/reject decisions. None of that is required for the standalone release.
+- attach diff identity to content rather than absolute positions;
+- keep proposed deletions in collaborative document content;
+- store resolution-critical change metadata in a Yjs shared map;
+- tag agent and resolution transactions with explicit origins;
+- make commands deterministic, atomic, and idempotent;
+- resolve grouped changes in one ProseMirror/Yjs transaction;
+- serialize conflicting accept/reject decisions;
+- converge after concurrent edits, reconnects, and duplicate delivery;
+- persist and restore content and metadata together.
 
 ### Editing pending changes
 
@@ -384,7 +384,7 @@ Default GitHub-style presentation:
 - Modified block: neutral change gutter with inline additions and deletions.
 - Focused change: stronger outline plus accept/reject controls.
 
-Review controls, hover cards, author labels, and change navigation are decorations or node-view UI. They must never be the only place where change identity is stored.
+Review controls, hover cards, author labels, decorations, colors, gutters, and change navigation belong to the client. They must never be the only place where change identity or resolution-critical state is stored.
 
 ### View modes
 
@@ -564,9 +564,9 @@ No validation error should leave part of a proposed change applied.
 - A custom atom node.
 - Nodes that explicitly disallow marks.
 
-### Deferred collaboration tests
+### Collaboration tests
 
-These tests are not required for the standalone release. When collaboration is implemented, run two or more synchronized documents and verify:
+Run two or more synchronized clients from the first mutation phase and verify:
 
 - typing before, inside, and after pending insertions;
 - edits adjacent to pending deletions;
@@ -596,6 +596,19 @@ After every sequence, assert:
 - every pending metadata record has at least one document segment;
 - clean projections contain no diff artifacts.
 
+### Visual fixture harness
+
+Each deterministic diff fixture is also exposed in an HTML/Tiptap test page with four editor instances:
+
+1. `before` — the unmodified fixture;
+2. `proposed` — the tracked edit;
+3. `accepted` — acceptance applied to an independent copy of `proposed`;
+4. `rejected` — rejection applied to another independent copy of `proposed`.
+
+The page displays the semantic operation, expected invariants, automated assertion status, schema version, and fixture seed. Fixtures are filterable and directly addressable by URL so failures can be reproduced and visually inspected.
+
+The visual harness is developed alongside the sidecar REST and mutation tests. The final product demo builds on the same components and adds an agent plus multiple synchronized human editors.
+
 ## Implementation phases
 
 ### Phase 1: Inline proof of concept
@@ -606,6 +619,7 @@ After every sequence, assert:
 - Render GitHub-style inline diffs.
 - Implement individual accept and reject.
 - Implement the standalone change metadata store.
+- Add the visual fixture harness for every Phase 1 case.
 
 ### Phase 2: Common block support
 
@@ -613,6 +627,7 @@ After every sequence, assert:
 - Support paragraphs, headings, blockquotes, lists, code blocks, horizontal rules, and images.
 - Add block gutters and navigation.
 - Implement grouped multi-block changes.
+- Extend the harness with lists, nesting, code blocks, and grouped changes.
 
 ### Phase 3: Tables and custom schemas
 
@@ -620,6 +635,7 @@ After every sequence, assert:
 - Add the schema capability handshake.
 - Add configurable custom node adapters and fallback behavior.
 - Add schema mismatch reporting.
+- Add row, column, header, cell, merge, span, and nested-cell-content fixture views.
 
 ### Phase 4: Standalone production and packaging
 
@@ -630,21 +646,20 @@ After every sequence, assert:
 - Complete standalone fuzz and recovery testing.
 - Add metrics for invalid, stale, and normalized changes.
 
-### Deferred phase: Collaboration
+### Collaboration requirements in every phase
 
-- Add Yjs-backed change metadata.
-- Define transaction-origin and undo behavior.
+- Use Yjs-backed change metadata from the first tracked mutation.
+- Define transaction-origin and undo behavior before exposing mutations.
 - Serialize conflicting accept/reject decisions.
-- Add multi-client and offline normalization.
-- Complete convergence, reconnect, and conflict testing.
-- Document integration with Hocuspocus and Yjs providers.
+- Test multi-client convergence, reconnect, persistence, and reload in every applicable phase.
+- Keep Hocuspocus integration in the production path rather than a later compatibility layer.
 
 ## Success criteria
 
 The first production release is successful when:
 
 1. An MCP client can insert, delete, or replace content using stable block IDs.
-2. Every change renders as a clear GitHub-style diff in the editor.
+2. Every change exposes sufficient synchronized semantic state for a client to render and review it.
 3. Pending deletions remain reviewable until accepted.
 4. Accepting or rejecting a change produces the expected clean document.
 5. Common Tiptap blocks, including tables, remain schema-valid.

@@ -1,6 +1,8 @@
 
 # Agent-Native Editing for Live Collaborative Documents
 
+> Historical product narrative. This document is non-normative. Current technical decisions live in [architecture.md](../architecture.md) and [diffing-plan.md](../diffing-plan.md).
+
 ## Background
 
 One of the hardest engineering problems we encountered while building AI agents wasn't generating rich text documents—it was **editing them**.

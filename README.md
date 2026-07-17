@@ -1,6 +1,15 @@
 # editor-mcp
 
-Infrastructure and design work for a reusable MCP interface over Tiptap documents.
+Editor MCP is a production-oriented, collaboration-first document mutation service for AI agents and Tiptap/ProseMirror applications.
+
+## Design documents
+
+- [System architecture](docs/architecture.md) — normative architecture and delivery direction
+- [Implementation plan](docs/implementation-plan.md) — active TDD delivery sequence and exit criteria
+- [MVP schema](docs/mvp-schema.md) — normative nodes, marks, attributes, and semantic operations
+- [In-document diffing](docs/diffing-plan.md) — tracked-change semantics and implementation plan
+- [MCP deep dive](docs/mcp-deep-dive.md) — protocol research and reference
+- [Original design narrative](docs/scratch/plan.md) — historical, non-normative context
 
 ## Development setup
 

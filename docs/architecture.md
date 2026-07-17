@@ -19,6 +19,9 @@ The recommended initial architecture is:
 - An existing Hocuspocus/Yjs deployment remains the authoritative collaborative document runtime.
 - A reusable document mutation core owns operations, validation, preconditions, idempotency, conflicts, and audit metadata.
 - A host-supplied adapter owns the exact Tiptap schema, custom extensions, stable ID behavior, tracked changes, and ProseMirror transaction execution.
+- Collaboration through Yjs/Hocuspocus is part of the MVP and is tested from the first mutation phase.
+- The MVP schema includes tables as well as common text blocks, lists, and inline marks.
+- The service owns durable tracked-change semantics and resolution. Clients own visual presentation in Tiptap.
 - MCP remains a thin transport adapter supporting local `stdio` and remote Streamable HTTP.
 - The first production topology is embedded or colocated with a long-lived Hocuspocus service, not one ephemeral container per document or tool call.
 - Yjs binary state is authoritative storage. ProseMirror JSON is the canonical semantic projection. Enriched HTML is an agent-facing convenience format.
@@ -57,7 +60,7 @@ The initial implementation should validate this positioning through a build-vers
 
 - Editing arbitrary Tiptap applications with zero host integration.
 - Exposing raw ProseMirror positions, transactions, or Yjs updates to agents.
-- Providing a generic tracked-changes implementation for every editor schema.
+- Prescribing client-side tracked-change visuals, controls, decorations, gutters, or node views.
 - Running a globally distributed, active-active collaboration service.
 - Provisioning one container per document or per MCP call.
 - Supporting arbitrary executable Tiptap extensions supplied at request time.
@@ -398,9 +401,9 @@ Rules:
 
 ## 10. Review and tracked changes
 
-Review behavior is capability-gated through a `ReviewAdapter`.
+Reviewable edits are part of the MVP. Their durable semantic representation is stored in the collaborative document and synchronized through Yjs. The service defines how changes are created, grouped, validated, accepted, rejected, serialized, and recovered.
 
-The adapter must define:
+The server-side review contract must define:
 
 - Addition, deletion, replacement, and mark-change representation.
 - Suggestion IDs and authenticated authorship.
@@ -410,7 +413,7 @@ The adapter must define:
 - Effective document content while suggestions are pending.
 - Interaction with collaboration and undo history.
 
-The core supports `direct` and `suggest` modes only when advertised by the host adapter. If `suggest` is requested without a review adapter, the request fails closed.
+The client application decides how pending changes are rendered and where review controls appear. Decorations, node views, colors, gutters, hover cards, and controls are outside the service contract. Clients derive presentation from synchronized change marks, node attributes, metadata, and semantic status supplied by the service.
 
 Accepting or rejecting a suggestion is a separate authorized mutation. Agents should not be allowed to accept their own suggestions by default.
 
@@ -650,6 +653,8 @@ Editor-MCP/
 ├── apps/
 │   ├── mcp-server/
 │   └── reference-server/
+│   ├── visual-test-harness/
+│   └── demo/
 ├── packages/
 │   ├── protocol/
 │   ├── core/
@@ -674,6 +679,8 @@ Editor-MCP/
 | `@editor-mcp/adapter-tiptap-hocuspocus` | Tiptap schema, HTML/JSON conversion, ProseMirror/Yjs mutation, direct Hocuspocus access |
 | `apps/mcp-server` | MCP transports and tool/resource registration |
 | `apps/reference-server` | Runnable Hocuspocus reference integration and HTTP composition root |
+| `apps/visual-test-harness` | Browser-visible fixture matrix showing before, proposed, accepted, and rejected editor states |
+| `apps/demo` | Finished agent-plus-multiple-editors product demonstration |
 
 Dependencies flow inward toward protocol and core. Packages do not import another package's private `src` files.
 
@@ -792,9 +799,32 @@ Every accepted edit must satisfy:
 - Duplicate and reordered updates.
 - Controlled database failure.
 
+#### Visual fixture harness
+
+Every diff fixture must be usable by both automated tests and a browser-visible Tiptap harness. A fixture produces four independently materialized editor states:
+
+```text
+before
+  Original collaborative document before the agent operation.
+
+proposed
+  Document after the tracked operation is applied.
+
+accepted
+  A fresh copy of proposed state after accepting the change.
+
+rejected
+  A separate fresh copy of proposed state after rejecting the change.
+```
+
+The harness presents these states side by side, includes the semantic operation and expected invariants, and supports filtering by node type, operation, and edge case. Accepted and rejected are sibling outcomes, never sequential mutations of the same instance.
+
+The same fixture must assert canonical ProseMirror JSON, clean projections, tracking metadata, schema validity, and Yjs convergence. Visual inspection supplements these assertions; it does not replace them.
+
 #### End to end
 
 - Two browser editors and one agent.
+- Fixture routes that reproduce every automated diff case as before/proposed/accepted/rejected Tiptap editors.
 - Visible direct or suggested edit.
 - Conflict and reread flow.
 - Accept/reject when supported.
@@ -852,21 +882,23 @@ Initial metrics:
 
 Do not use raw document or user IDs as metric dimensions.
 
-## 21. Proposed v0 compatibility envelope
+## 21. MVP compatibility envelope
 
 - Tiptap 3.
 - Hocuspocus 4.
 - Node 22 and 24.
 - One configured `Y.XmlFragment` field per document.
-- One server-safe extension bundle based initially on StarterKit.
+- One server-safe, versioned extension bundle based initially on StarterKit plus tables and the Editor MCP tracking extensions.
 - Stable UUID node attributes installed before agent editing.
-- Basic text blocks and common inline marks.
-- Block-level read, insert, replace, and delete.
+- Paragraphs, headings, blockquotes, bullet lists, ordered lists, list items, code blocks, horizontal rules, hard breaks, tables, table rows, table headers, table cells, and text.
+- Bold, italic, strike, inline code, and link marks.
+- Block-level and localized text read, insert, replace, delete, and format operations.
+- Structured table row and column operations.
 - Constrained HTML fragments plus canonical ProseMirror JSON validation.
-- Direct edits in the core.
-- Suggestion mode only through a registered host review adapter.
+- Reviewable edits, durable change metadata, and accept/reject operations.
+- Yjs/Hocuspocus collaboration and multi-client convergence from the first production phase.
 - No generic AI cursor or awareness behavior.
-- No tables, custom NodeViews, subdocuments, pages, or arbitrary atom nodes until individually certified.
+- No custom NodeViews, subdocuments, pages, media nodes, task lists, or arbitrary atom nodes until individually certified.
 
 ## 22. Delivery sequence
 
@@ -880,35 +912,37 @@ Produce:
 4. A review/tracked-changes decision.
 5. Deployment ADRs for embedded, remote-client, and managed-service modes.
 
-### Phase 1: narrow technical spike
+### Phase 1: production foundation
 
-Build:
+Build with production package boundaries and test-first contracts:
 
-- One Hocuspocus document.
-- StarterKit-compatible schema.
+- The versioned MVP schema, including tables and tracking extensions.
+- A production Hocuspocus/Yjs document lifecycle.
 - Stable block IDs.
-- One read operation.
-- One atomic `replace_block` operation.
+- Versioned read and atomic edit contracts.
+- The first vertical operation implemented through the production mutation core and adapter.
 - Target digest conflicts.
 - Durable idempotency.
 - Two concurrent Yjs clients.
 - Persistence and reload verification.
+- CI-grade unit, contract, integration, convergence, and recovery tests.
 
-### Phase 2: protocol and local MCP
+### Phase 2: complete semantic mutation surface and local MCP
 
 - Extract versioned Zod schemas.
 - Implement the mutation core and adapter ports.
 - Add local `stdio` MCP.
 - Add atomic operation batches.
 - Add generated-document and concurrency tests.
+- Add localized text operations and structured table operations incrementally behind passing contract and integration tests.
 
-### Phase 3: reference production service
+### Phase 3: remote production service
 
 - Remote Streamable HTTP MCP.
 - OAuth and document authorization.
 - Durable audit and recovery journal.
 - Operational limits, telemetry, and runbooks.
-- One supported review adapter if product requirements demand suggestions.
+- Collaborative tracked-change resolution, client-facing change data, and accept/reject APIs.
 
 ### Phase 4: managed deployment experiments
 
@@ -922,11 +956,11 @@ The following must be resolved before committing to a production architecture:
 
 - Is the primary product an open-source library, MCP server, hosted service, or all three in stages?
 - What is the concrete advantage over Tiptap Server AI Toolkit?
-- Does the project depend on paid Tiptap tracked-changes capabilities, build its own review model, or defer reviewable edits?
+- What exact durable tracked-change representation and metadata layout will the service certify?
 - Does v0 require self-hosting and strict data residency?
 - Will customers already operate Hocuspocus, or will Editor MCP eventually own collaboration infrastructure?
 - What precise acknowledgement and recovery guarantees are promised?
-- Which node types and custom schema features are in the first certified compatibility envelope?
+- Are any additional nodes or marks required beyond the defined MVP compatibility envelope?
 - Are agents allowed to commit directly, or only suggest by default?
 - Is multi-document discovery and editing part of the initial use case?
 - What document sizes, latency, concurrency, availability, RPO, and RTO targets define success?
