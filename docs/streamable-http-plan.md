@@ -80,9 +80,10 @@ reusing one transport can collide message identifiers across independent clients
 References:
 
 - [MCP TypeScript SDK repository](https://github.com/modelcontextprotocol/typescript-sdk)
-- [SDK server guide](https://github.com/modelcontextprotocol/typescript-sdk/blob/main/docs/server.md)
-- The installed v1 package's `honoWebStandardStreamableHttp` example, which is the version-matched
-  implementation reference during coding
+- [SDK v1 server guide](https://ts.sdk.modelcontextprotocol.io/server)
+- The SDK `v1.x` branch's `honoWebStandardStreamableHttp` example at the commit corresponding to
+  version `1.29.0`, which is the version-matched implementation reference during coding. Do not use
+  examples from the repository's v2 `main` branch.
 
 ### HTTP framework
 
@@ -170,8 +171,15 @@ pieces; and `cli.ts` only invokes `main()` and reports sanitized startup failure
 ### Begin stateless
 
 Omit `sessionIdGenerator` when constructing `WebStandardStreamableHTTPServerTransport`. For each MCP
-request, construct a fresh `McpServer`, construct a fresh transport, connect them, handle the request,
-and close both in a `finally` path.
+POST request, construct a fresh `McpServer`, construct a fresh transport with
+`enableJsonResponse: true`, connect them, await the complete JSON response, and close both in a
+`finally` path. JSON response mode is part of Streamable HTTP and gives the initial request-scoped
+implementation an unambiguous cleanup boundary.
+
+Do not combine immediate `finally` cleanup with an SSE response body. The SDK may return that streaming
+response before tool execution and body delivery have finished. If POST streaming is later required for
+progress or other request-scoped events, keep the server and transport alive until the response stream
+finishes or is cancelled, and test that lifecycle explicitly.
 
 Stateless mode is the correct initial default because:
 
@@ -181,16 +189,24 @@ Stateless mode is the correct initial default because:
 - there is no in-memory session map to leak, expire, or lose at process restart; and
 - the implementation remains useful to generic agents without inventing a proprietary session model.
 
-In this mode, standalone GET and DELETE requests to `/mcp` return the SDK-defined method-not-allowed
-response. POST responses retain the SDK's normal content negotiation; do not force JSON-only responses.
-This preserves full Streamable HTTP compatibility for clients that negotiate SSE on a POST response.
+Stateless MCP transport does not mean stateless documents. A `read_document` request will carry explicit
+tenant and document identity, resolve the current document through the long-lived document runtime, and
+return agent-readable content with its version. A later mutation request will carry that identity,
+version or target preconditions, and an idempotency key. The agent host retains tool results in its own
+conversation state; Hocuspocus/Yjs remains the authoritative live document state.
+
+In this mode, the application returns `405 Method Not Allowed` for standalone GET and DELETE requests to
+`/mcp` before constructing an SDK transport. Do not rely on the v1.29.0 SDK to synthesize those responses:
+with session management disabled, its GET path can create an SSE stream and its DELETE path can return
+success. POST uses protocol-compliant JSON responses for the initial shell.
 
 ### Criteria for stateful mode later
 
-Reopen the decision only when a capability needs long-lived server-to-client notifications, resumable
-streams, or another protocol behavior that cannot be served statelessly. A stateful design must then
-specify session expiry, event replay, storage or affinity, multi-instance behavior, disconnect cleanup,
-and denial-of-service limits. It must not quietly add an in-process map and call that production-ready.
+Reopen the decision only when a capability needs a standalone server-to-client stream, resumability, or
+another protocol behavior that cannot be served by request-scoped POST responses. Request-scoped SSE
+progress alone does not require a stateful MCP session. A stateful design must specify session expiry,
+event replay, storage or affinity, multi-instance behavior, disconnect cleanup, and denial-of-service
+limits. It must not quietly add an in-process map and call that production-ready.
 
 ## HTTP contract
 
@@ -198,9 +214,9 @@ and denial-of-service limits. It must not quietly add an in-process map and call
 
 | Method and path | Behavior |
 | --- | --- |
-| `POST /mcp` | Pass the web-standard request to a new stateless SDK transport and MCP server. |
-| `GET /mcp` | Let the stateless SDK transport return its protocol-correct method-not-allowed response. |
-| `DELETE /mcp` | Let the stateless SDK transport return its protocol-correct method-not-allowed response. |
+| `POST /mcp` | Pass the web-standard request to a new stateless SDK transport and MCP server in JSON response mode. |
+| `GET /mcp` | Return `405 Method Not Allowed` without constructing an SDK transport. |
+| `DELETE /mcp` | Return `405 Method Not Allowed` without constructing an SDK transport. |
 | `GET /healthz` | Return a small liveness response; do not expose capabilities, configuration, or secrets. |
 | Any other route | Return `404`. |
 
@@ -354,9 +370,9 @@ prove:
 - a test-only registered probe tool can be listed and called through Streamable HTTP;
 - the production registrar still advertises no product capabilities;
 - malformed JSON and invalid MCP messages return protocol-correct failures;
-- GET and DELETE have stateless method-not-allowed behavior;
+- GET and DELETE receive application-owned `405` responses without SDK server construction;
 - separate and concurrent requests receive separate server/transport instances;
-- all per-request resources close on success and failure; and
+- all per-request resources close after the complete JSON response on success and failure; and
 - a handler error does not leak its internal message or stack.
 
 Use SDK-level in-memory request tests where possible. Do not assert private fields in Hono or the MCP
