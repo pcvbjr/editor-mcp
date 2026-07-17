@@ -1,0 +1,22 @@
+{
+  "name": "@editor-mcp/mcp-server",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "bin": {
+    "editor-mcp": "./dist/cli.js"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "clean": "tsc -b --clean",
+    "dev": "tsx src/cli.ts",
+    "start": "node dist/cli.js",
+    "test": "vitest run --root ../.. --config vitest.config.ts apps/mcp-server",
+    "test:integration": "pnpm build && vitest run --root ../.. --config vitest.config.ts apps/mcp-server/test/mcp/stdio.integration.test.ts",
+    "typecheck": "tsc -p tsconfig.json --noEmit --pretty false"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "1.29.0",
+    "zod": "4.4.3"
+  }
+}

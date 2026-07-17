@@ -8,19 +8,18 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "build": "tsc -b --stopBuildOnErrors",
-    "clean": "tsc -b --clean",
+    "build": "pnpm -r --if-present run build",
+    "clean": "pnpm -r --if-present run clean",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint . --max-warnings=0",
-    "test": "vitest run --passWithNoTests",
-    "test:coverage": "vitest run --coverage --passWithNoTests",
+    "test": "pnpm build && vitest run",
+    "test:coverage": "pnpm build && vitest run --coverage",
     "test:watch": "vitest",
     "typecheck": "tsc -p tsconfig.json --noEmit",
-    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm build"
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:coverage"
   },
   "dependencies": {
-    "@modelcontextprotocol/sdk": "^1.29.0",
     "@tiptap/core": "3.28.0",
     "@tiptap/extension-image": "3.28.0",
     "@tiptap/extension-list": "3.28.0",

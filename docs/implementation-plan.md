@@ -278,6 +278,12 @@ Verification and exit criteria:
 
 ### Workstream F — MCP adapters
 
+The MCP workstream remains the owner of product-facing tools, resources, and domain contracts. An
+infrastructure-only stdio shell may be developed earlier in parallel under `apps/mcp-server` so
+process, transport, and lifecycle concerns are proven independently. That shell must advertise no
+product capabilities and must not introduce protocol, core, or editor-tool contracts before the
+corresponding domain work is ready.
+
 Implement the thin agent-facing adapter independently of domain semantics:
 
 - `editor.document.read.v1`.
