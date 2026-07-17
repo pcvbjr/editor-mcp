@@ -180,7 +180,7 @@ pnpm --filter @editor-mcp/mcp-server start
 Manual inspection uses the compiled app entry point:
 
 ```sh
-npx @modelcontextprotocol/inspector node apps/mcp-server/dist/cli.js
+pnpm exec mcp-inspector node apps/mcp-server/dist/cli.js
 ```
 
 ## Related documents

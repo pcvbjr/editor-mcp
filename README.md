@@ -58,7 +58,7 @@ pnpm --filter @editor-mcp/mcp-server start
 To inspect the compiled server manually:
 
 ```sh
-npx @modelcontextprotocol/inspector node apps/mcp-server/dist/cli.js
+make mcp-inspect
 ```
 
 Inspector should complete initialization and report the MCP app name and version. Product
