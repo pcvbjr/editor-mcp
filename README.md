@@ -55,6 +55,9 @@ pnpm --filter @editor-mcp/mcp-server build
 pnpm --filter @editor-mcp/mcp-server test
 pnpm --filter @editor-mcp/mcp-server test:integration
 pnpm --filter @editor-mcp/mcp-server start
+
+# local Streamable HTTP transport
+make mcp-http
 ```
 
 To inspect the compiled server manually:
@@ -65,3 +68,6 @@ make mcp-inspect
 
 Inspector should complete initialization and report the MCP app name and version. Product
 capabilities are not registered until the first product-capability slice is integrated.
+
+The local Streamable HTTP endpoint is `http://127.0.0.1:3000/mcp`. It is loopback-only and
+unauthenticated by design; authenticated public deployment is a separate future slice.

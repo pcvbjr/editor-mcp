@@ -17,6 +17,7 @@
     "test:coverage": "pnpm build && vitest run --coverage",
     "test:watch": "vitest",
     "mcp:inspect": "pnpm --filter @editor-mcp/mcp-server build && pnpm exec mcp-inspector node apps/mcp-server/dist/cli.js",
+    "mcp:http": "pnpm --filter @editor-mcp/mcp-server build && pnpm --filter @editor-mcp/mcp-server start:http",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:coverage"
   },

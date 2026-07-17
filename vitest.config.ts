@@ -19,7 +19,12 @@ export default defineConfig({
       reporter: ['text', 'json', 'html'],
       reportsDirectory: 'coverage',
       include: ['apps/**/src/**/*.ts', 'packages/**/src/**/*.ts'],
-      exclude: ['apps/mcp-server/src/cli.ts'],
+      exclude: [
+        'apps/mcp-server/src/cli.ts',
+        'apps/mcp-server/src/http/cli.ts',
+        'apps/mcp-server/src/http/main.ts',
+        'apps/mcp-server/src/http/process.ts',
+      ],
       thresholds: {
         branches: 80,
         functions: 85,

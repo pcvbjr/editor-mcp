@@ -90,9 +90,15 @@ importers:
 
   apps/mcp-server:
     dependencies:
+      '@hono/node-server':
+        specifier: 1.19.14
+        version: 1.19.14(hono@4.12.30)
       '@modelcontextprotocol/sdk':
         specifier: 1.29.0
         version: 1.29.0(zod@4.4.3)
+      hono:
+        specifier: 4.12.30
+        version: 4.12.30
       zod:
         specifier: 4.4.3
         version: 4.4.3
