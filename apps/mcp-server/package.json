@@ -1,18 +1,40 @@
 {
   "name": "@editor-mcp/mcp-server",
   "version": "0.0.0",
+  "description": "Private local MCP server for Editor MCP document mutation capabilities.",
   "private": true,
+  "license": "UNLICENSED",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/pcvbjr/editor-mcp.git",
+    "directory": "apps/mcp-server"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "prosemirror",
+    "tiptap",
+    "document-editing"
+  ],
+  "engines": {
+    "node": ">=22.13.0"
+  },
+  "files": [
+    "dist"
+  ],
   "bin": {
     "editor-mcp": "./dist/cli.js"
   },
   "scripts": {
     "build": "tsc -b",
-    "clean": "tsc -b --clean",
+    "clean": "node scripts/clean.mjs",
     "dev": "tsx src/cli.ts",
+    "prepack": "pnpm run clean && pnpm run build",
     "start": "node dist/cli.js",
     "test": "vitest run --root ../.. --config vitest.config.ts apps/mcp-server",
     "test:integration": "pnpm build && vitest run --root ../.. --config vitest.config.ts apps/mcp-server/test/mcp/stdio.integration.test.ts",
+    "test:package": "tsx test/mcp/package-install.integration.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit --pretty false"
   },
   "dependencies": {

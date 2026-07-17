@@ -52,6 +52,7 @@ product tools, resources, or prompts yet.
 pnpm --filter @editor-mcp/mcp-server build
 pnpm --filter @editor-mcp/mcp-server test
 pnpm --filter @editor-mcp/mcp-server test:integration
+pnpm --filter @editor-mcp/mcp-server test:package
 pnpm --filter @editor-mcp/mcp-server start
 ```
 
@@ -63,3 +64,20 @@ make mcp-inspect
 
 Inspector should complete initialization and report the MCP app name and version. Product
 capabilities are not registered until the first product-capability slice is integrated.
+
+For local MCP hosts that accept JSON server configuration, build the server and register its
+compiled entry point with an absolute path:
+
+```json
+{
+  "mcpServers": {
+    "editor-mcp": {
+      "command": "node",
+      "args": ["/absolute/path/to/editor-mcp/apps/mcp-server/dist/cli.js"]
+    }
+  }
+}
+```
+
+The exact settings file and top-level key vary by host. The command must use an absolute path, and
+the server must reserve stdout for MCP messages; process diagnostics go to stderr.
