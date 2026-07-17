@@ -2,7 +2,7 @@ PNPM ?= pnpm
 
 .DEFAULT_GOAL := help
 
-.PHONY: help setup install build clean format format-check lint test test-watch coverage typecheck check
+.PHONY: help setup install build clean format format-check lint test test-watch coverage typecheck check mcp-inspect
 
 help:
 	@printf '%s\n' \
@@ -17,6 +17,7 @@ help:
 		'  test          Run tests once' \
 		'  test-watch    Run tests in watch mode' \
 		'  coverage      Run tests with V8 coverage' \
+		'  mcp-inspect   Build and open the MCP server in Inspector' \
 		'  check         Run all pre-commit checks' \
 		'  clean         Remove TypeScript build outputs'
 
@@ -49,6 +50,9 @@ test-watch:
 
 coverage:
 	$(PNPM) test:coverage
+
+mcp-inspect:
+	$(PNPM) mcp:inspect
 
 typecheck:
 	$(PNPM) typecheck
