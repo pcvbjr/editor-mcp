@@ -1,7 +1,7 @@
 import { z } from 'zod';
 
 import { parseHostAuthority } from './authority.js';
-import { parseOrigin } from './origin.js';
+import { parseSerializedHttpOrigin } from './origin.js';
 
 const loopbackHosts = ['127.0.0.1', 'localhost', '[::1]'] as const;
 
@@ -25,14 +25,15 @@ const optionalCsv = z.string().transform((value, context) => {
 });
 
 const origin = z.string().transform((value, context) => {
-  const parsed = parseOrigin(value);
-  if (parsed !== undefined) return parsed;
-
-  context.addIssue({
-    code: 'custom',
-    message: 'Origins must be explicit HTTP(S) scheme-and-authority values',
-  });
-  return z.NEVER;
+  const parsed = parseSerializedHttpOrigin(value);
+  if (parsed === undefined) {
+    context.addIssue({
+      code: 'custom',
+      message: 'Origins must be explicit serialized HTTP origins',
+    });
+    return z.NEVER;
+  }
+  return parsed;
 });
 
 const canonicalAuthorities = csv.transform((values, context) => {
@@ -124,7 +125,7 @@ const httpConfigSchema = z
     authTimeoutMs: boundedMilliseconds(2_000, 10_000),
     authMaxInFlight: z.coerce.number().int().min(1).max(256).default(16),
     maxInFlight: z.coerce.number().int().min(1).max(1_024).default(32),
-    shutdownGraceMs: boundedMilliseconds(30_000, 120_000),
+    shutdownGraceMs: boundedMilliseconds(30_000, 30_000),
   })
   .superRefine((value, context) => {
     const publicAuthority = parseHostAuthority(value.publicUrl.host)?.canonical;

@@ -4,6 +4,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { authenticatedMcpPrincipalFromAuthInfo } from '../../src/http/auth/principal.js';
 import { createWorkosTokenVerifier } from '../../src/http/auth/workos-token-verifier.js';
 import { createHttpServerConfig } from '../../src/http/config.js';
+import type { InternalErrorReporter } from '../../src/diagnostics.js';
 
 const config = createHttpServerConfig();
 const issuer = config.issuerUrl.href.replace(/\/$/u, '');
@@ -65,11 +66,13 @@ describe('WorkOS token verifier', () => {
   });
 
   it('distinguishes provider failure from an invalid credential', async () => {
+    const reportError = vi.fn<InternalErrorReporter>();
     const verifier = createWorkosTokenVerifier({
       config,
       introspectionEndpoint: new URL('/oauth2/introspection', config.issuerUrl),
       verifyJwt: () => Promise.resolve(jwtClaims),
       fetchIntrospection: vi.fn(() => Promise.reject(new Error('TOP_SECRET_PROVIDER'))),
+      reportError,
     });
 
     const outcome = verifier.verifyAccessToken('TOP_SECRET_TOKEN').catch((error: unknown) => error);
@@ -78,6 +81,35 @@ describe('WorkOS token verifier', () => {
       'message',
       expect.stringContaining('TOP_SECRET'),
     );
+    expect(reportError).toHaveBeenCalledOnce();
+    const [event] = reportError.mock.calls[0] ?? [];
+    expect(event?.phase).toBe('auth');
+    expect(event?.error).toMatchObject({ message: 'TOP_SECRET_PROVIDER' });
+  });
+
+  it('prevents credential-bearing introspection redirects', async () => {
+    const fetchIntrospection = vi.fn(() => Promise.resolve(introspectionResponse()));
+    const verifier = createWorkosTokenVerifier({
+      config,
+      introspectionEndpoint: new URL('/oauth2/introspection', config.issuerUrl),
+      verifyJwt: () => Promise.resolve(jwtClaims),
+      fetchIntrospection,
+    });
+
+    await verifier.verifyAccessToken('opaque');
+    expect(fetchIntrospection).toHaveBeenCalledWith(
+      new URL('/oauth2/introspection', config.issuerUrl),
+      expect.objectContaining({ redirect: 'error' }),
+    );
+  });
+
+  it('rejects an introspection endpoint outside the configured issuer origin', () => {
+    expect(() =>
+      createWorkosTokenVerifier({
+        config,
+        introspectionEndpoint: new URL('https://credentials.example/oauth2/introspection'),
+      }),
+    ).toThrow('configured issuer origin');
   });
 
   it('represents M2M tokens as service principals', async () => {

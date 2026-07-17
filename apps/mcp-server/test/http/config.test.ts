@@ -73,6 +73,10 @@ describe('HTTP configuration', () => {
     [{ ...requiredEnvironment, EDITOR_MCP_HTTP_BODY_LIMIT_BYTES: '100' }, 'tiny body limit'],
     [{ ...requiredEnvironment, EDITOR_MCP_AUTH_MAX_IN_FLIGHT: '0' }, 'zero auth bulkhead'],
     [
+      { ...requiredEnvironment, EDITOR_MCP_HTTP_SHUTDOWN_GRACE_MS: '30001' },
+      'shutdown budget beyond Railway drain margin',
+    ],
+    [
       { ...requiredEnvironment, EDITOR_MCP_HTTP_PORT: '1111', PORT: '4321' },
       'conflicting Railway and application ports',
     ],

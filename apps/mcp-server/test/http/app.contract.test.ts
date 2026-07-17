@@ -123,7 +123,9 @@ describe('HTTP application contract', () => {
       });
       expect(response.status).toBe(500);
       expect(await response.text()).not.toContain('TOP_SECRET');
-      expect(reportError.mock.calls.map(([event]) => event.phase)).toContain('request');
+      expect(reportError.mock.calls.map(([event]) => event.phase)).toEqual(
+        expect.arrayContaining(['request', 'close']),
+      );
     } finally {
       await harness.close();
     }
@@ -160,7 +162,7 @@ describe('HTTP application contract', () => {
     });
     const baseUrl = await harness.start();
     try {
-      await fetch(new URL('/mcp', baseUrl), {
+      await fetch(new URL('/mcp?access_token=TOP_SECRET_QUERY', baseUrl), {
         method: 'POST',
         headers: {
           authorization: 'Bearer TOP_SECRET_BEARER',
@@ -169,6 +171,7 @@ describe('HTTP application contract', () => {
         body: '{}',
       });
       expect(messages.join('')).not.toContain('TOP_SECRET_BEARER');
+      expect(messages.join('')).not.toContain('TOP_SECRET_QUERY');
       expect(messages.join('')).not.toContain('authorization');
     } finally {
       await harness.close();

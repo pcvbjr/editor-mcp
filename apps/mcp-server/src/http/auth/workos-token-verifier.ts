@@ -7,6 +7,7 @@ import { z } from 'zod';
 import type { HttpServerConfig } from '../config.js';
 import { createConcurrencyGate } from '../operations/concurrency-gate.js';
 import type { AuthenticatedMcpPrincipal } from './principal.js';
+import { reportInternalError, type InternalErrorReporter } from '../../diagnostics.js';
 
 const jwtClaimsSchema = z.object({
   iss: z.url(),
@@ -75,6 +76,7 @@ export interface WorkosTokenVerifierOptions {
   readonly introspectionEndpoint: URL;
   readonly fetchIntrospection?: typeof fetch;
   readonly verifyJwt?: (token: string) => Promise<unknown>;
+  readonly reportError?: InternalErrorReporter;
 }
 
 export function createWorkosTokenVerifier({
@@ -82,7 +84,14 @@ export function createWorkosTokenVerifier({
   introspectionEndpoint,
   fetchIntrospection = fetch,
   verifyJwt,
+  reportError,
 }: WorkosTokenVerifierOptions): OAuthTokenVerifier {
+  if (
+    introspectionEndpoint.origin !== config.issuerUrl.origin ||
+    (config.issuerUrl.protocol === 'https:' && introspectionEndpoint.protocol !== 'https:')
+  ) {
+    throw new Error('WorkOS introspection endpoint must use the configured issuer origin');
+  }
   const gate = createConcurrencyGate(config.authMaxInFlight);
   const jwks = createRemoteJWKSet(new URL('/oauth2/jwks', config.issuerUrl), {
     timeoutDuration: config.authTimeoutMs,
@@ -109,6 +118,7 @@ export function createWorkosTokenVerifier({
         if (error instanceof joseErrors.JOSEError || error instanceof z.ZodError) {
           throw new InvalidTokenError('Invalid WorkOS access token');
         }
+        reportInternalError(reportError, { phase: 'auth', error });
         throw new ServerError('Token verification unavailable');
       }
       if (claims.iss !== issuer || !includesAudience(claims.aud, resource)) {
@@ -117,6 +127,10 @@ export function createWorkosTokenVerifier({
 
       const lease = gate.tryAcquire();
       if (lease === undefined) {
+        reportInternalError(reportError, {
+          phase: 'auth',
+          error: new Error('WorkOS introspection concurrency limit reached'),
+        });
         throw new ServerError('Token verification capacity exceeded');
       }
 
@@ -135,8 +149,11 @@ export function createWorkosTokenVerifier({
           },
           body,
           signal: AbortSignal.timeout(config.authTimeoutMs),
+          redirect: 'error',
         });
-        if (!response.ok) throw new ServerError('Token introspection unavailable');
+        if (!response.ok) {
+          throw new Error(`WorkOS introspection returned HTTP ${String(response.status)}`);
+        }
 
         const result = introspectionSchema.parse(await response.json());
         if (!result.active) throw new InvalidTokenError('Inactive WorkOS access token');
@@ -163,6 +180,7 @@ export function createWorkosTokenVerifier({
         };
       } catch (error: unknown) {
         if (error instanceof InvalidTokenError || error instanceof ServerError) throw error;
+        reportInternalError(reportError, { phase: 'auth', error });
         if (error instanceof z.ZodError) {
           throw new ServerError('Invalid token introspection response');
         }

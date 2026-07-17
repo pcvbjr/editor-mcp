@@ -26,13 +26,20 @@ describe('WorkOS authorization metadata', () => {
       issuer: 'https://authkit.example.test',
       code_challenge_methods_supported: ['S256'],
     });
-    expect(fetchMetadata).toHaveBeenCalledOnce();
+    expect(fetchMetadata).toHaveBeenCalledExactlyOnceWith(
+      new URL('/.well-known/oauth-authorization-server', config.issuerUrl),
+      expect.objectContaining({ redirect: 'error' }),
+    );
   });
 
   it.each([
     [metadata({ issuer: 'https://other.example' }), 'issuer'],
     [metadata({ code_challenge_methods_supported: [] }), 'PKCE'],
     [metadata({ introspection_endpoint: undefined }), 'introspection'],
+    [
+      metadata({ introspection_endpoint: 'https://credentials.example/oauth2/introspection' }),
+      'cross-origin introspection',
+    ],
   ])('rejects invalid %s metadata (%s)', async (response, _description) => {
     void _description;
     await expect(

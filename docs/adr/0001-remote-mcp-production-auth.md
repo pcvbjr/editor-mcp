@@ -33,6 +33,8 @@ accepts Express request authentication context directly.
   to product-owned actor and tenant IDs before accessing a document.
 - Launch one Railway replica. Distributed rate limiting and multiple replicas are deferred until document
   writes and idempotency are durable across replicas.
+- Treat SDK request cancellation as a cooperative application contract. Every product tool and editor
+  adapter must honor `extra.signal`; transport closure cannot forcibly terminate an arbitrary promise.
 
 ## Consequences
 

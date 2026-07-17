@@ -21,6 +21,7 @@ function createProcessControl() {
     },
     onStdinEnd: () => () => undefined,
     scheduleTimeout: () => () => undefined,
+    writeStdout: vi.fn(),
     writeStderr: vi.fn(),
     setExitCode: vi.fn(),
     forceExit: vi.fn(),
@@ -43,7 +44,7 @@ describe('HTTP process orchestration', () => {
       runtime: { start: () => Promise.resolve(address), close },
       processControl: processControl.control,
     });
-    expect(processControl.control.writeStderr).toHaveBeenCalledWith(
+    expect(processControl.control.writeStdout).toHaveBeenCalledWith(
       'MCP HTTP server listening at http://[::1]:30000/mcp\n',
     );
 

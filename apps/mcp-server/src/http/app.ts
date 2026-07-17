@@ -8,6 +8,7 @@ import type { OAuthTokenVerifier } from '@modelcontextprotocol/sdk/server/auth/p
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import type { OAuthMetadata } from '@modelcontextprotocol/sdk/shared/auth.js';
+import cors from 'cors';
 import express, {
   type ErrorRequestHandler,
   type Express,
@@ -34,6 +35,7 @@ import {
   requestIdMiddleware,
 } from './security.js';
 import { reportInternalError, type InternalErrorReporter } from '../diagnostics.js';
+import { createExecutionTracker } from '../execution-tracker.js';
 import {
   createMcpServer,
   type CapabilityRegistrar,
@@ -121,7 +123,7 @@ export function createHttpApp({
     pinoHttp({
       logger,
       autoLogging: {
-        ignore: (request: Request) => request.url === '/healthz' || request.url === '/readyz',
+        ignore: (request) => request.url === '/healthz' || request.url === '/readyz',
       },
       genReqId: (_request: Request, response: Response) =>
         String(response.getHeader('x-request-id')),
@@ -131,11 +133,12 @@ export function createHttpApp({
         return 'info';
       },
       redact: ['req.headers.authorization', 'req.headers.cookie', 'res.headers.set-cookie'],
+      wrapSerializers: false,
       serializers: {
         req: (request: Request) => ({
           id: request.id,
           method: request.method,
-          url: request.url,
+          path: request.path,
         }),
         res: (response: Response) => ({ statusCode: response.statusCode }),
       },
@@ -156,6 +159,26 @@ export function createHttpApp({
   });
 
   app.use(createMcpHostValidation(config));
+  app.use(
+    cors({
+      origin: (requestOrigin, callback) => {
+        callback(
+          null,
+          requestOrigin !== undefined && config.allowedOrigins.includes(requestOrigin),
+        );
+      },
+      methods: ['GET', 'POST', 'OPTIONS'],
+      allowedHeaders: ['Authorization', 'Content-Type', 'MCP-Protocol-Version'],
+      exposedHeaders: [
+        'WWW-Authenticate',
+        'X-Request-Id',
+        'RateLimit',
+        'RateLimit-Policy',
+        'Retry-After',
+      ],
+      optionsSuccessStatus: 204,
+    }),
+  );
   app.use(
     mcpAuthMetadataRouter({
       oauthMetadata,
@@ -213,9 +236,10 @@ export function createHttpApp({
       }
 
       const transport = new StreamableHTTPServerTransport({ enableJsonResponse: true });
+      const executions = createExecutionTracker();
       const serverOptions = reportError
-        ? { name: serverName, version: serverVersion, reportError }
-        : { name: serverName, version: serverVersion };
+        ? { name: serverName, version: serverVersion, reportError, executionTracker: executions }
+        : { name: serverName, version: serverVersion, executionTracker: executions };
       const server = register
         ? createServer({ ...serverOptions, register })
         : createServer(serverOptions);
@@ -223,30 +247,51 @@ export function createHttpApp({
       const close = async (): Promise<void> => {
         if (closed) return;
         closed = true;
-        await Promise.allSettled([transport.close(), server.close()]);
+        const results = await Promise.allSettled([transport.close(), server.close()]);
+        results.forEach((result) => {
+          if (result.status === 'rejected') {
+            reportInternalError(reportError, { phase: 'close', error: result.reason });
+          }
+        });
       };
       const removeActiveRequest = activeRequests.add({ close });
+      let bookkeepingSettled = false;
+      const settleBookkeeping = async (): Promise<void> => {
+        if (bookkeepingSettled) return;
+        bookkeepingSettled = true;
+        removeActiveRequest();
+        lease.release();
+        await close();
+      };
+      let resolveDeadline: (() => void) | undefined;
+      const deadlineReached = new Promise<'expired'>((resolve) => {
+        resolveDeadline = () => {
+          resolve('expired');
+        };
+      });
       const deadline = setTimeout(() => {
-        void close();
         if (!response.headersSent) {
           response.status(504).json({ error: 'Request deadline exceeded' });
         }
+        void close();
+        resolveDeadline?.();
       }, config.requestTimeoutMs);
 
       try {
         // The SDK's Node transport declaration predates exactOptionalPropertyTypes.
         await server.connect(transport as Transport);
-        await transport.handleRequest(request, response, request.body);
+        const requestOutcome = await Promise.race([
+          transport.handleRequest(request, response, request.body).then(() => 'handled' as const),
+          deadlineReached,
+        ]);
+        if (requestOutcome === 'expired') await executions.whenIdle();
       } catch (error: unknown) {
         reportInternalError(reportError, { phase: 'request', error });
         sendInternalError(response);
       } finally {
         clearTimeout(deadline);
-        removeActiveRequest();
-        lease.release();
-        await close().catch((error: unknown) => {
-          reportInternalError(reportError, { phase: 'close', error });
-        });
+        await executions.whenIdle();
+        await settleBookkeeping();
       }
     },
   );

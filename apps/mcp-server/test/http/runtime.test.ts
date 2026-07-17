@@ -75,10 +75,14 @@ describe('HTTP server lifecycle', () => {
   });
 
   it('aborts registered work after the graceful shutdown deadline', async () => {
-    const closeActive = vi.fn(() => Promise.resolve());
     const readiness = createReadinessController();
     const active = createActiveRequestRegistry();
-    active.add({ close: closeActive });
+    const activeRegistration: { remove?: () => void } = {};
+    const closeActive = vi.fn(() => {
+      activeRegistration.remove?.();
+      return Promise.resolve();
+    });
+    activeRegistration.remove = active.add({ close: closeActive });
     let markRequestStarted: (() => void) | undefined;
     const requestStarted = new Promise<void>((resolve) => {
       markRequestStarted = resolve;
@@ -97,7 +101,7 @@ describe('HTTP server lifecycle', () => {
     );
     await requestStarted;
 
-    await expect(runtime.close()).rejects.toThrow('required forced connection termination');
+    await expect(runtime.close()).resolves.toBeUndefined();
     expect(closeActive).toHaveBeenCalledOnce();
     expect(readiness.isReady).toBe(false);
     await pendingRequest;

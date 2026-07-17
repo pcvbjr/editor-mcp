@@ -103,6 +103,43 @@ describe('Streamable HTTP MCP integration', () => {
     }
   });
 
+  it('aborts timed-out tools and retains bookkeeping until the callback settles', async () => {
+    let observedAbort = false;
+    const harness = createTestHttpHarness({
+      config: createHttpServerConfig({ port: 0, requestTimeoutMs: 50 }),
+      register: (server) => {
+        server.registerTool('test.wait-for-abort', {}, (extra) => {
+          return new Promise((_resolve, reject) => {
+            extra.signal.addEventListener(
+              'abort',
+              () => {
+                observedAbort = true;
+                reject(new Error('expected test abort'));
+              },
+              { once: true },
+            );
+          });
+        });
+      },
+    });
+    const baseUrl = await harness.start();
+    const client = new Client({ name: 'timeout-http-client', version: '1.0.0' });
+
+    try {
+      await client.connect(createAuthenticatedTransport(new URL('/mcp', baseUrl)));
+      await expect(client.callTool({ name: 'test.wait-for-abort' })).rejects.toMatchObject({
+        code: 504,
+      });
+      await vi.waitFor(() => {
+        expect(observedAbort).toBe(true);
+        expect(harness.activeRequests.size).toBe(0);
+      });
+    } finally {
+      await client.close();
+      await harness.close();
+    }
+  });
+
   it('starts the compiled production HTTP binary and exits cleanly on SIGTERM', async () => {
     const metadataServer = createServer((request, response) => {
       if (request.url !== '/.well-known/oauth-authorization-server') {
@@ -145,7 +182,11 @@ describe('Streamable HTTP MCP integration', () => {
       },
       stdio: ['ignore', 'pipe', 'pipe'],
     });
+    let stdout = '';
     let stderr = '';
+    child.stdout.on('data', (chunk: Buffer) => {
+      stdout += chunk.toString();
+    });
     child.stderr.on('data', (chunk: Buffer) => {
       stderr += chunk.toString();
     });
@@ -153,8 +194,8 @@ describe('Streamable HTTP MCP integration', () => {
       const timer = setTimeout(() => {
         reject(new Error(`HTTP server not ready: ${stderr}`));
       }, 5_000);
-      child.stderr.on('data', () => {
-        if (stderr.includes('/mcp')) {
+      child.stdout.on('data', () => {
+        if (stdout.includes('/mcp')) {
           clearTimeout(timer);
           resolve();
         }

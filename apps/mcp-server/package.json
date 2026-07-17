@@ -44,6 +44,7 @@
   },
   "dependencies": {
     "@modelcontextprotocol/sdk": "1.29.0",
+    "cors": "2.8.6",
     "express": "5.2.1",
     "express-rate-limit": "8.5.2",
     "jose": "6.2.3",
@@ -52,6 +53,7 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@types/cors": "2.8.19",
     "@types/express": "5.0.6"
   }
 }

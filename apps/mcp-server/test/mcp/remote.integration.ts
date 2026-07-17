@@ -52,7 +52,9 @@ try {
     version: packageManifest.version,
   });
   await client.ping();
-  await client.listTools();
+  if (client.getServerCapabilities()?.tools !== undefined) {
+    await client.listTools();
+  }
 } finally {
   await client.close();
 }

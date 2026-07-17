@@ -16,6 +16,7 @@ it('composes an importable authenticated HTTP app and closes through the process
     },
     onStdinEnd: () => () => undefined,
     scheduleTimeout: () => () => undefined,
+    writeStdout: vi.fn(),
     writeStderr: vi.fn(),
     setExitCode: vi.fn(),
     forceExit: vi.fn(),
@@ -27,7 +28,7 @@ it('composes an importable authenticated HTTP app and closes through the process
     oauthMetadata: testOAuthMetadata,
     tokenVerifier: testTokenVerifier,
   });
-  expect(processControl.writeStderr).toHaveBeenCalledWith(
+  expect(processControl.writeStdout).toHaveBeenCalledWith(
     expect.stringMatching(/^MCP HTTP server listening at http:\/\/127\.0\.0\.1:\d+\/mcp\n$/u),
   );
 

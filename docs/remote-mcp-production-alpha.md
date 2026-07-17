@@ -44,7 +44,12 @@ Required variables:
 
 Railway supplies `PORT`. Optional bounds have production defaults: 1 MiB bodies, 25-second request
 deadline, 2-second/16-request WorkOS introspection bulkhead, 32 MCP requests per replica, and a 30-second
-application drain inside Railway's 35-second drain window.
+total application drain (25 seconds graceful plus at most 5 seconds forced) inside Railway's 35-second
+drain window.
+
+Browser MCP clients are supported only from the exact origins in `EDITOR_MCP_HTTP_ALLOWED_ORIGINS`.
+Discovery and `/mcp` preflights allow the authorization, content-type, and MCP protocol-version headers;
+wildcards and origin values containing paths, credentials, queries, or fragments are rejected.
 
 ## Release verification
 
@@ -58,6 +63,10 @@ Before inviting a user:
    access a document.
 6. Complete one authorized read/edit/read against a disposable production document.
 7. Exercise a Railway rollback and `SIGTERM` drain before launch.
+
+Every product tool and editor adapter must propagate and honor the SDK callback's `extra.signal`. Closing
+the transport requests cancellation but cannot terminate a JavaScript promise. A tool must not report an
+aborted operation as successful or continue a mutation after its transaction cancellation boundary.
 
 ## Operations
 

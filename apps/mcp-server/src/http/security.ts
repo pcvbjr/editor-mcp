@@ -5,6 +5,7 @@ import type { NextFunction, Request, RequestHandler, Response } from 'express';
 
 import { parseHostAuthority } from './authority.js';
 import type { HttpServerConfig } from './config.js';
+import { parseSerializedHttpOrigin } from './origin.js';
 
 const railwayHealthHost = 'healthcheck.railway.app';
 const requestIdPattern = /^[A-Za-z0-9_-]{1,128}$/u;
@@ -18,12 +19,39 @@ function allowedHostnames(authorities: readonly string[]): string[] {
   });
 }
 
+function createAuthorityValidation(authorities: readonly string[]): RequestHandler {
+  const validateHostname = hostHeaderValidation(allowedHostnames(authorities));
+  return (request, response, next): void => {
+    validateHostname(request, response, () => {
+      const requestAuthority = parseHostAuthority(request.headers.host ?? '');
+      const allowed =
+        requestAuthority !== undefined &&
+        authorities.some((authority) => {
+          const configured = parseHostAuthority(authority);
+          return (
+            configured?.hostname === requestAuthority.hostname &&
+            (configured.port === undefined || configured.port === requestAuthority.port)
+          );
+        });
+      if (!allowed) {
+        response.status(403).json({
+          jsonrpc: '2.0',
+          error: { code: -32_000, message: 'Invalid Host authority' },
+          id: null,
+        });
+        return;
+      }
+      next();
+    });
+  };
+}
+
 export function createMcpHostValidation(config: HttpServerConfig): RequestHandler {
-  return hostHeaderValidation(allowedHostnames(config.allowedHosts));
+  return createAuthorityValidation(config.allowedHosts);
 }
 
 export function createHealthHostValidation(config: HttpServerConfig): RequestHandler {
-  return hostHeaderValidation([...allowedHostnames(config.allowedHosts), railwayHealthHost]);
+  return createAuthorityValidation([...config.allowedHosts, railwayHealthHost]);
 }
 
 export function createOriginValidation(config: HttpServerConfig): RequestHandler {
@@ -34,16 +62,16 @@ export function createOriginValidation(config: HttpServerConfig): RequestHandler
       return;
     }
 
-    try {
-      const normalized = new URL(requestOrigin).origin;
-      if (requestOrigin === 'null' || !config.allowedOrigins.includes(normalized)) {
-        response.status(403).json({ error: 'Forbidden' });
-        return;
-      }
-      next();
-    } catch {
+    const normalized = parseSerializedHttpOrigin(requestOrigin);
+    if (
+      normalized === undefined ||
+      requestOrigin !== normalized ||
+      !config.allowedOrigins.includes(normalized)
+    ) {
       response.status(403).json({ error: 'Forbidden' });
+      return;
     }
+    next();
   };
 }
 

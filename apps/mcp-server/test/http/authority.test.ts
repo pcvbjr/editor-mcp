@@ -2,7 +2,7 @@ import fc from 'fast-check';
 import { describe, expect, it } from 'vitest';
 
 import { parseHostAuthority } from '../../src/http/authority.js';
-import { parseOrigin } from '../../src/http/origin.js';
+import { parseSerializedHttpOrigin } from '../../src/http/origin.js';
 
 describe('HTTP authority parsing', () => {
   it('canonicalizes equivalent IPv6 spellings', () => {
@@ -50,10 +50,10 @@ describe('HTTP Origin parsing', () => {
     'https://agent.example?query',
     'https://agent.example#fragment',
   ])('rejects malformed Origin %s', (origin) => {
-    expect(parseOrigin(origin)).toBeUndefined();
+    expect(parseSerializedHttpOrigin(origin)).toBeUndefined();
   });
 
   it('canonicalizes scheme, hostname, and default port', () => {
-    expect(parseOrigin('HTTPS://AGENT.example:443/')).toBe('https://agent.example');
+    expect(parseSerializedHttpOrigin('HTTPS://AGENT.example:443/')).toBe('https://agent.example');
   });
 });

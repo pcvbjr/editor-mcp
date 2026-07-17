@@ -114,11 +114,18 @@ export function createHttpServerRuntime(
     closePromise = (startPromise?.catch(() => undefined) ?? Promise.resolve())
       .then(async () => {
         if (server === undefined) return;
+        const totalDeadline = Date.now() + config.shutdownGraceMs;
+        const forcedReserveMs = Math.min(
+          5_000,
+          Math.max(1, Math.floor(config.shutdownGraceMs / 6)),
+        );
+        const gracefulBudgetMs = Math.max(1, config.shutdownGraceMs - forcedReserveMs);
         const closeOperation = closeServer(server);
+        const gracefulOperation = Promise.all([closeOperation, activeRequests.whenEmpty()]);
         server.closeIdleConnections();
-        const gracefulDeadline = createDeadline(config.shutdownGraceMs);
+        const gracefulDeadline = createDeadline(gracefulBudgetMs);
         const result = await Promise.race([
-          closeOperation.then(() => 'closed' as const),
+          gracefulOperation.then(() => 'closed' as const),
           gracefulDeadline.promise.then(() => 'expired' as const),
         ]);
         gracefulDeadline.cancel();
@@ -126,16 +133,15 @@ export function createHttpServerRuntime(
 
         await activeRequests.closeAll();
         server.closeAllConnections();
-        const forcedDeadline = createDeadline(config.shutdownGraceMs);
+        const forcedDeadline = createDeadline(Math.max(1, totalDeadline - Date.now()));
         const forced = await Promise.race([
-          closeOperation.then(() => 'closed' as const),
+          gracefulOperation.then(() => 'closed' as const),
           forcedDeadline.promise.then(() => 'expired' as const),
         ]);
         forcedDeadline.cancel();
         if (forced === 'expired') {
           throw new Error('HTTP server did not close after forced connection termination');
         }
-        throw new Error('HTTP server required forced connection termination');
       })
       .finally(() => {
         readiness.markNotReady();

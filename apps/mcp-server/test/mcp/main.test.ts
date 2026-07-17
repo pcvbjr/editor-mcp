@@ -15,6 +15,7 @@ function createProcessControl() {
       };
     },
     scheduleTimeout: () => () => undefined,
+    writeStdout: vi.fn(),
     writeStderr: vi.fn(),
     setExitCode: vi.fn(),
     forceExit: vi.fn(),

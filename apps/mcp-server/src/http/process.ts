@@ -8,7 +8,7 @@ export interface RunHttpServerProcessOptions {
   readonly runtime: Pick<HttpServerRuntime, 'start' | 'close'>;
   readonly processControl: Pick<
     ProcessControl,
-    'onSignal' | 'writeStderr' | 'setExitCode' | 'forceExit'
+    'onSignal' | 'writeStdout' | 'writeStderr' | 'setExitCode' | 'forceExit'
   >;
 }
 
@@ -22,11 +22,10 @@ export async function runHttpServerProcess({
   processControl,
 }: RunHttpServerProcessOptions): Promise<void> {
   let shutdownPromise: Promise<void> | undefined;
-  const shutdownState = { started: false };
+  let shutdownStarted = false;
   let removeSignalHandlers: (() => void)[] = [];
 
   const shutdown = (): Promise<void> => {
-    shutdownState.started = true;
     shutdownPromise ??= runtime
       .close()
       .catch((error: unknown) => {
@@ -44,11 +43,11 @@ export async function runHttpServerProcess({
   };
 
   const handleSignal = (signal: SupportedTerminationSignal): void => {
-    if (shutdownState.started) {
+    if (shutdownStarted) {
       processControl.forceExit(signal === 'SIGINT' ? 130 : 143);
       return;
     }
-    shutdownState.started = true;
+    shutdownStarted = true;
     void shutdown();
   };
 
@@ -63,9 +62,7 @@ export async function runHttpServerProcess({
 
   try {
     const address = await runtime.start();
-    if (!shutdownState.started) {
-      processControl.writeStderr(`MCP HTTP server listening at ${formatAddress(address)}/mcp\n`);
-    }
+    processControl.writeStdout(`MCP HTTP server listening at ${formatAddress(address)}/mcp\n`);
   } catch (error: unknown) {
     processControl.writeStderr(`MCP HTTP server failed to start: ${describeError(error)}\n`);
     processControl.setExitCode(1);

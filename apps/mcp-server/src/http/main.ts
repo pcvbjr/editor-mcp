@@ -44,6 +44,7 @@ export async function main({
     createWorkosTokenVerifier({
       config,
       introspectionEndpoint: new URL(introspectionEndpoint),
+      reportError,
     });
   const readiness = createReadinessController();
   const activeRequests = createActiveRequestRegistry();

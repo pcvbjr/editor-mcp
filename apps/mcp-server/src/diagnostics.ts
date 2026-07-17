@@ -1,6 +1,6 @@
 export type InternalErrorEvent =
   | { readonly phase: 'tool'; readonly operation: string; readonly error: unknown }
-  | { readonly phase: 'request' | 'close' | 'listener'; readonly error: unknown };
+  | { readonly phase: 'auth' | 'request' | 'close' | 'listener'; readonly error: unknown };
 
 export type InternalErrorReporter = (event: InternalErrorEvent) => void;
 
