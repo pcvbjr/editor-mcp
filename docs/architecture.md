@@ -334,26 +334,15 @@ The result should include:
 
 ### 8.5 Error taxonomy
 
-Initial stable domain codes:
+`editorErrorCodeSchema` in `packages/protocol/src/errors.ts` is the authoritative public error-code
+taxonomy. Public error envelopes are strict, versioned values containing a stable code, a bounded
+safe message, retryability, and an optional opaque correlation ID. Tool-specific recovery details
+are intentionally deferred until their contracts exist; untyped details are not allowed.
 
-- `INVALID_REQUEST`
-- `UNAUTHENTICATED`
-- `PERMISSION_DENIED`
-- `DOCUMENT_NOT_FOUND`
-- `DOCUMENT_INCARNATION_MISMATCH`
-- `SCHEMA_VERSION_MISMATCH`
-- `TARGET_NOT_FOUND`
-- `TARGET_AMBIGUOUS`
-- `TARGET_CHANGED`
-- `INVALID_CONTENT`
-- `UNSUPPORTED_CONTENT`
-- `PATCH_TOO_LARGE`
-- `IDEMPOTENCY_MISMATCH`
-- `DOCUMENT_UNAVAILABLE`
-- `DEADLINE_EXCEEDED`
-- `INTERNAL`
-
-Public errors must not expose document content, ProseMirror internals, stack traces, or storage details.
+The domain core owns framework-neutral failure reasons. MCP and HTTP adapters map those reasons
+exhaustively into the public protocol schema. MCP protocol failures continue to use the MCP SDK's
+JSON-RPC errors; expected editor failures use the public editor error envelope. Public errors must
+not expose document content, ProseMirror internals, stack traces, or storage details.
 
 ## 9. Concurrency and idempotency
 
