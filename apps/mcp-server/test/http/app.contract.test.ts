@@ -1,7 +1,8 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createHttpApp } from '../../src/http/app.js';
 import { createHttpServerConfig } from '../../src/http/config.js';
+import type { InternalErrorReporter } from '../../src/diagnostics.js';
 
 describe('HTTP application contract', () => {
   it('keeps the health endpoint separate from MCP routing', async () => {
@@ -52,5 +53,34 @@ describe('HTTP application contract', () => {
       version: '0.0.0',
     });
     expect(payload.result.capabilities).toEqual({});
+  });
+
+  it('sanitizes request failures and reports request and cleanup causes internally', async () => {
+    const reportError = vi.fn<InternalErrorReporter>();
+    const app = createHttpApp({
+      config: createHttpServerConfig(),
+      reportError,
+      createServer: () => ({
+        connect: () => Promise.reject(new Error('TOP_SECRET_REQUEST')),
+        close: () => Promise.reject(new Error('TOP_SECRET_CLOSE')),
+      }),
+    });
+    const response = await app.request('http://127.0.0.1/mcp', {
+      method: 'POST',
+      headers: {
+        'content-type': 'application/json',
+        accept: 'application/json, text/event-stream',
+      },
+      body: '{}',
+    });
+
+    expect(response.status).toBe(500);
+    const body = await response.text();
+    expect(body).toContain('Internal server error');
+    expect(body).not.toContain('TOP_SECRET');
+    expect(reportError.mock.calls.map(([event]) => event)).toEqual([
+      { phase: 'request', error: new Error('TOP_SECRET_REQUEST') },
+      { phase: 'close', error: new Error('TOP_SECRET_CLOSE') },
+    ]);
   });
 });

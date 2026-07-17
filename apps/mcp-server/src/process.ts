@@ -1,6 +1,7 @@
 import process from 'node:process';
 
 import type { McpServerLifecycle } from './lifecycle.js';
+import { describeError } from './diagnostics.js';
 
 export type SupportedTerminationSignal = 'SIGINT' | 'SIGTERM';
 
@@ -53,13 +54,6 @@ export function createNodeProcessControl(): ProcessControl {
   };
 }
 /* v8 ignore stop */
-
-function describeError(error: unknown): string {
-  if (!(error instanceof Error) || error.message.length === 0) {
-    return 'unknown error';
-  }
-  return error.message.replace(/[\r\n]+/gu, ' ');
-}
 
 export async function runMcpServerProcess({
   lifecycle,

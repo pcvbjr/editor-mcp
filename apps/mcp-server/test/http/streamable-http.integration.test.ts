@@ -3,11 +3,12 @@ import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 import { spawn } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 
 import { createHttpApp } from '../../src/http/app.js';
 import { createHttpServerConfig } from '../../src/http/config.js';
 import { createHttpServerRuntime } from '../../src/http/runtime.js';
+import type { InternalErrorReporter } from '../../src/diagnostics.js';
 import { registerProbeTool } from '../support/register-probe-tool.js';
 
 const repositoryRoot = fileURLToPath(new URL('../../../', import.meta.url));
@@ -62,6 +63,68 @@ describe('Streamable HTTP MCP integration', () => {
           await client.close();
         }),
       );
+      await runtime.close();
+    }
+  });
+
+  it('binds with Node IPv6 syntax and accepts bracketed IPv6 Host authority', async () => {
+    const config = createHttpServerConfig({
+      host: '::1',
+      port: 0,
+      allowedHosts: ['[::1]'],
+    });
+    const runtime = createHttpServerRuntime(createHttpApp({ config }), config);
+    const address = await runtime.start();
+    const client = new Client({ name: 'ipv6-http-client', version: '1.0.0' });
+
+    try {
+      await client.connect(
+        new StreamableHTTPClientTransport(
+          new URL(`http://[::1]:${String(address.port)}/mcp`),
+        ) as Transport,
+      );
+      expect(client.getServerVersion()).toMatchObject({ name: '@editor-mcp/mcp-server' });
+    } finally {
+      await client.close();
+      await runtime.close();
+    }
+  });
+
+  it('never returns raw tool exceptions over HTTP', async () => {
+    const reportError = vi.fn<InternalErrorReporter>();
+    const config = createHttpServerConfig({ port: 0 });
+    const app = createHttpApp({
+      config,
+      reportError,
+      register: (server) => {
+        server.registerTool('test.secret-error', {}, () => {
+          throw new Error('TOP_SECRET_HTTP_INTERNAL');
+        });
+      },
+    });
+    const runtime = createHttpServerRuntime(app, config);
+    const address = await runtime.start();
+    const client = new Client({ name: 'safe-error-http-client', version: '1.0.0' });
+
+    try {
+      await client.connect(
+        new StreamableHTTPClientTransport(
+          new URL(`http://127.0.0.1:${String(address.port)}/mcp`),
+        ) as Transport,
+      );
+      const result = await client.callTool({ name: 'test.secret-error' });
+      expect(result).toMatchObject({
+        content: [{ type: 'text', text: 'Tool execution failed' }],
+        isError: true,
+      });
+      expect(JSON.stringify(result)).not.toContain('TOP_SECRET_HTTP_INTERNAL');
+      expect(reportError.mock.calls[0]?.[0]).toEqual({
+        phase: 'tool',
+        operation: 'test.secret-error',
+        error: new Error('TOP_SECRET_HTTP_INTERNAL'),
+      });
+    } finally {
+      await client.close();
       await runtime.close();
     }
   });

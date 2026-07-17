@@ -38,6 +38,17 @@ describe('HTTP request security', () => {
     await expect(response.json()).resolves.toEqual({ error: 'Forbidden' });
   });
 
+  it.each(['user@localhost', 'evil@localhost:43123', 'localhost/path', 'localhost?query'])(
+    'rejects malformed Host authority %s',
+    async (host) => {
+      const response = await app.request('http://127.0.0.1:43123/healthz', {
+        headers: { Host: host },
+      });
+
+      expect(response.status).toBe(403);
+    },
+  );
+
   it('does not emit permissive CORS headers', async () => {
     const response = await app.request('http://127.0.0.1:43123/healthz');
 

@@ -2,7 +2,7 @@
 
 ## Status
 
-Proposed infrastructure slice. This plan adds a standards-based Streamable HTTP transport to the
+Implemented infrastructure slice. This plan adds a standards-based Streamable HTTP transport to the
 existing MCP server app without selecting product tools, editor operations, deployment infrastructure,
 or an identity provider.
 
@@ -428,13 +428,12 @@ Document one vendor-neutral smoke test first:
 
 ```sh
 make mcp-http
-pnpm exec mcp-inspector --cli http://127.0.0.1:3000/mcp --transport http --method tools/list
+pnpm exec mcp-inspector --transport http --server-url http://127.0.0.1:3000/mcp
 ```
 
-The pinned Inspector CLI uses the URL as its positional target. The current shell advertises no product
-tools, so `tools/list` may correctly return MCP `Method not found` after the transport handshake; use the
-Inspector UI or a temporary test registrar to inspect a capability. Also document minimal examples for
-clients that already support Streamable HTTP, such as:
+This opens the Inspector UI with the HTTP endpoint selected and initialization succeeds without invoking
+an unavailable capability. The automated smoke uses the official SDK client to initialize and ping the
+same endpoint. Also document minimal examples for clients that already support Streamable HTTP, such as:
 
 ```toml
 [mcp_servers.editor_mcp]

@@ -1,6 +1,7 @@
 import type { AddressInfo } from 'node:net';
 
 import type { HttpServerRuntime } from './runtime.js';
+import { describeError } from '../diagnostics.js';
 import type { ProcessControl, SupportedTerminationSignal } from '../process.js';
 
 export interface RunHttpServerProcessOptions {
@@ -9,11 +10,6 @@ export interface RunHttpServerProcessOptions {
     ProcessControl,
     'onSignal' | 'writeStderr' | 'setExitCode' | 'forceExit'
   >;
-}
-
-function describeError(error: unknown): string {
-  if (!(error instanceof Error) || error.message.length === 0) return 'unknown error';
-  return error.message.replace(/[\r\n]+/gu, ' ');
 }
 
 function formatAddress(address: AddressInfo): string {
@@ -35,6 +31,7 @@ export async function runHttpServerProcess({
       .catch((error: unknown) => {
         processControl.writeStderr(`MCP HTTP server failed to stop: ${describeError(error)}\n`);
         processControl.setExitCode(1);
+        processControl.forceExit(1);
       })
       .finally(() => {
         removeSignalHandlers.forEach((remove) => {

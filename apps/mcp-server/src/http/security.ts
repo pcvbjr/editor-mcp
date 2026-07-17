@@ -1,26 +1,16 @@
 import type { MiddlewareHandler } from 'hono';
 
+import { parseHostAuthority } from './authority.js';
 import type { HttpServerConfig } from './config.js';
 
-function normalizeHost(value: string): string {
-  return value.trim().toLowerCase().replace(/\.$/u, '');
-}
-
 function hostMatches(requestHost: string, allowedHost: string): boolean {
-  const requestValue = normalizeHost(requestHost);
-  const allowedValue = normalizeHost(allowedHost);
-
-  if (requestValue === allowedValue) {
-    return true;
-  }
-
-  try {
-    const requestUrl = new URL(`http://${requestValue}`);
-    const allowedUrl = new URL(`http://${allowedValue}`);
-    return allowedUrl.port.length === 0 && requestUrl.hostname === allowedUrl.hostname;
-  } catch {
-    return false;
-  }
+  const requestAuthority = parseHostAuthority(requestHost);
+  const allowedAuthority = parseHostAuthority(allowedHost);
+  if (requestAuthority === undefined || allowedAuthority === undefined) return false;
+  return (
+    requestAuthority.hostname === allowedAuthority.hostname &&
+    (allowedAuthority.port === undefined || requestAuthority.port === allowedAuthority.port)
+  );
 }
 
 function isAllowedHost(request: Request, config: HttpServerConfig): boolean {
