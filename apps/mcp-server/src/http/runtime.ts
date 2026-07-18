@@ -74,32 +74,41 @@ export function createHttpServerRuntime(
   let listenerClosePromise: Promise<void> | undefined;
   let cancelStart: ((error: Error) => void) | undefined;
 
-  const closeListeningServer = async (): Promise<void> => {
+  const closeListeningServer = async (
+    shutdownDeadline: number,
+    gracefulDeadline: number,
+  ): Promise<void> => {
     if (server === undefined) return;
 
-    const totalDeadline = Date.now() + config.shutdownGraceMs;
-    const forcedReserveMs = Math.min(5_000, Math.max(1, Math.floor(config.shutdownGraceMs / 6)));
-    const gracefulBudgetMs = Math.max(1, config.shutdownGraceMs - forcedReserveMs);
     const closeOperation = closeServer(server);
     const gracefulOperation = Promise.all([closeOperation, activeRequests.whenEmpty()]);
     server.closeIdleConnections();
 
-    const gracefulResult = await settleBeforeDeadline(gracefulOperation, gracefulBudgetMs);
+    const gracefulResult = await settleBeforeDeadline(
+      gracefulOperation,
+      Math.max(0, gracefulDeadline - Date.now()),
+    );
     if (gracefulResult === 'settled') return;
 
-    await activeRequests.closeAll();
+    await settleBeforeDeadline(
+      activeRequests.closeAll(),
+      Math.max(0, shutdownDeadline - Date.now()),
+    );
     server.closeAllConnections();
     const forcedResult = await settleBeforeDeadline(
       gracefulOperation,
-      Math.max(1, totalDeadline - Date.now()),
+      Math.max(0, shutdownDeadline - Date.now()),
     );
     if (forcedResult === 'expired') {
       throw new Error('HTTP server did not close after forced connection termination');
     }
   };
 
-  const ensureListenerClosed = (): Promise<void> => {
-    listenerClosePromise ??= closeListeningServer();
+  const ensureListenerClosed = (
+    shutdownDeadline: number,
+    gracefulDeadline: number,
+  ): Promise<void> => {
+    listenerClosePromise ??= closeListeningServer(shutdownDeadline, gracefulDeadline);
     return listenerClosePromise;
   };
 
@@ -174,26 +183,24 @@ export function createHttpServerRuntime(
     const wasStarting = state === 'starting';
     state = 'closing';
     readiness.markNotReady();
+    const shutdownDeadline = Date.now() + config.shutdownGraceMs;
+    const forcedReserveMs = Math.min(5_000, Math.max(1, Math.floor(config.shutdownGraceMs / 6)));
+    const gracefulDeadline = shutdownDeadline - forcedReserveMs;
     closePromise = (async () => {
-      let startupDeadlineError: Error | undefined;
       if (wasStarting && startPromise !== undefined) {
         const startupResult = await settleBeforeDeadline(
           startPromise.then(
             () => undefined,
             () => undefined,
           ),
-          config.shutdownGraceMs,
+          Math.max(0, gracefulDeadline - Date.now()),
         );
         if (startupResult === 'expired') {
-          startupDeadlineError = new Error(
-            'HTTP server startup did not settle before the shutdown deadline',
-          );
-          cancelStart?.(startupDeadlineError);
+          cancelStart?.(new Error('HTTP server startup cancelled during shutdown'));
         }
       }
 
-      await ensureListenerClosed();
-      if (startupDeadlineError !== undefined) throw startupDeadlineError;
+      await ensureListenerClosed(shutdownDeadline, gracefulDeadline);
     })().finally(() => {
       readiness.markNotReady();
       state = 'closed';

@@ -145,13 +145,57 @@ describe('HTTP server lifecycle', () => {
     await vi.advanceTimersByTimeAsync(10);
 
     await expect(startOutcome).resolves.toEqual(
-      new Error('HTTP server startup did not settle before the shutdown deadline'),
+      new Error('HTTP server startup cancelled during shutdown'),
     );
-    await expect(closeOutcome).resolves.toEqual(
-      new Error('HTTP server startup did not settle before the shutdown deadline'),
-    );
+    await expect(closeOutcome).resolves.toBeUndefined();
     expect(deferred.server.close).toHaveBeenCalledOnce();
     expect(runtime.state).toBe('closed');
+  });
+
+  it('does not restart the shutdown grace period after startup cancellation', async () => {
+    vi.useFakeTimers();
+    const readiness = createReadinessController();
+    const active = createActiveRequestRegistry();
+    active.add({ close: () => new Promise<void>(() => undefined) });
+    const server = {
+      once: vi.fn(),
+      listen: vi.fn(),
+      address: vi.fn(() => ({ address: '127.0.0.1', family: 'IPv4', port: 43_210 })),
+      close: vi.fn(),
+      closeIdleConnections: vi.fn(),
+      closeAllConnections: vi.fn(),
+    };
+    const runtime = createHttpServerRuntime(
+      immediateResponse,
+      createHttpServerConfig({ port: 0, shutdownGraceMs: 10 }),
+      readiness,
+      active,
+      (() => server) as unknown as ServeFunction,
+    );
+
+    const startOutcome = runtime.start().catch((error: unknown) => error);
+    const closeOutcome = runtime.close().catch((error: unknown) => error);
+    let closeSettled = false;
+    void closeOutcome.then(
+      () => {
+        closeSettled = true;
+      },
+      () => {
+        closeSettled = true;
+      },
+    );
+
+    await vi.advanceTimersByTimeAsync(9);
+    expect(closeSettled).toBe(false);
+    await vi.advanceTimersByTimeAsync(10);
+
+    await expect(startOutcome).resolves.toEqual(
+      new Error('HTTP server startup cancelled during shutdown'),
+    );
+    await expect(closeOutcome).resolves.toEqual(
+      new Error('HTTP server did not close after forced connection termination'),
+    );
+    expect(closeSettled).toBe(true);
   });
 
   it('closes a listener that binds after startup cancellation', async () => {
