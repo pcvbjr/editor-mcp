@@ -11,8 +11,8 @@ Editor MCP is a production-oriented, collaboration-first document mutation servi
 - [MCP deep dive](docs/mcp-deep-dive.md) — protocol research and reference
 - [MCP server bones](docs/mcp-server-bones-plan.md) — TDD plan and acceptance criteria for the
   stdio server shell
-- [Streamable HTTP transport](docs/streamable-http-plan.md) — standards-based transport architecture,
-  dependency decisions, security boundary, and TDD execution plan
+- [Streamable HTTP transport plan](docs/streamable-http-plan.md) — historical design rationale; the
+  accepted Express/OAuth implementation is documented in the remote production-alpha runbook and ADR
 - [Remote production-alpha runbook](docs/remote-mcp-production-alpha.md) — WorkOS, Railway,
   deployment verification, and operating procedures
 - [Remote authorization ADR](docs/adr/0001-remote-mcp-production-auth.md) — accepted WorkOS,

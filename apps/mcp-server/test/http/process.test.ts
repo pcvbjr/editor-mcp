@@ -134,7 +134,7 @@ describe('HTTP process orchestration', () => {
       expect(close).toHaveBeenCalledOnce();
     });
 
-    expect(processControl.control.writeStderr).not.toHaveBeenCalledWith(
+    expect(processControl.control.writeStdout).not.toHaveBeenCalledWith(
       expect.stringContaining('listening'),
     );
   });

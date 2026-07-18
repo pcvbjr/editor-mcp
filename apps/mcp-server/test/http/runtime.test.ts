@@ -5,11 +5,31 @@ import { describe, expect, it, vi } from 'vitest';
 import { createHttpServerConfig } from '../../src/http/config.js';
 import { createReadinessController } from '../../src/http/readiness.js';
 import { createActiveRequestRegistry } from '../../src/http/request-registry.js';
-import { createHttpServerRuntime } from '../../src/http/runtime.js';
+import { createHttpServerRuntime, type ServeFunction } from '../../src/http/runtime.js';
 
 const immediateResponse: RequestListener = (_request, response) => {
   response.end('ok');
 };
+
+function createDeferredServer() {
+  let listening: (() => void) | undefined;
+  const server = {
+    once: vi.fn(),
+    listen: vi.fn((_port: number, _host: string, callback: () => void) => {
+      listening = callback;
+    }),
+    address: vi.fn(() => ({ address: '127.0.0.1', family: 'IPv4', port: 43_210 })),
+    close: vi.fn((callback: () => void) => {
+      callback();
+    }),
+    closeIdleConnections: vi.fn(),
+    closeAllConnections: vi.fn(),
+  };
+  return {
+    server,
+    announceListening: () => listening?.(),
+  };
+}
 
 describe('HTTP server lifecycle', () => {
   it('starts once, configures readiness, and closes idempotently', async () => {
@@ -105,5 +125,57 @@ describe('HTTP server lifecycle', () => {
     expect(closeActive).toHaveBeenCalledOnce();
     expect(readiness.isReady).toBe(false);
     await pendingRequest;
+  });
+
+  it('bounds shutdown when listener startup never settles', async () => {
+    vi.useFakeTimers();
+    const readiness = createReadinessController();
+    const active = createActiveRequestRegistry();
+    const deferred = createDeferredServer();
+    const runtime = createHttpServerRuntime(
+      immediateResponse,
+      createHttpServerConfig({ port: 0, shutdownGraceMs: 10 }),
+      readiness,
+      active,
+      (() => deferred.server) as unknown as ServeFunction,
+    );
+
+    const startOutcome = runtime.start().catch((error: unknown) => error);
+    const closeOutcome = runtime.close().catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(10);
+
+    await expect(startOutcome).resolves.toEqual(
+      new Error('HTTP server startup did not settle before the shutdown deadline'),
+    );
+    await expect(closeOutcome).resolves.toEqual(
+      new Error('HTTP server startup did not settle before the shutdown deadline'),
+    );
+    expect(deferred.server.close).toHaveBeenCalledOnce();
+    expect(runtime.state).toBe('closed');
+  });
+
+  it('closes a listener that binds after startup cancellation', async () => {
+    vi.useFakeTimers();
+    const readiness = createReadinessController();
+    const active = createActiveRequestRegistry();
+    const deferred = createDeferredServer();
+    const runtime = createHttpServerRuntime(
+      immediateResponse,
+      createHttpServerConfig({ port: 0, shutdownGraceMs: 10 }),
+      readiness,
+      active,
+      (() => deferred.server) as unknown as ServeFunction,
+    );
+
+    const startOutcome = runtime.start().catch((error: unknown) => error);
+    const closeOutcome = runtime.close().catch((error: unknown) => error);
+    await vi.advanceTimersByTimeAsync(10);
+    await startOutcome;
+    await closeOutcome;
+
+    deferred.announceListening();
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(deferred.server.close).toHaveBeenCalledTimes(2);
   });
 });

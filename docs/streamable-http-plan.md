@@ -2,9 +2,15 @@
 
 ## Status
 
-Implemented infrastructure slice. This plan adds a standards-based Streamable HTTP transport to the
-existing MCP server app without selecting product tools, editor operations, deployment infrastructure,
-or an identity provider.
+Superseded historical plan. The original implementation slice described here used Hono. The accepted
+remote-auth decision in `docs/adr/0001-remote-mcp-production-auth.md` selected Express because the
+pinned MCP TypeScript SDK exposes its production authentication helpers for Express. The current
+implementation lives under `apps/mcp-server/src/http` and uses Express, the official SDK transport,
+WorkOS, and JOSE.
+
+The remaining sections preserve the original design rationale and acceptance criteria; update them only
+when revisiting that historical decision. Current launch requirements are tracked in the remote
+production-alpha runbook.
 
 The transport is designed for any conforming MCP client: general-purpose AI agents, custom agent
 runtimes, IDEs, desktop applications, and hosted model providers. Codex, Claude, MCP Inspector, and

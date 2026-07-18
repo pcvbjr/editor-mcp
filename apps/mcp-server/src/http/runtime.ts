@@ -43,6 +43,21 @@ function createDeadline(milliseconds: number): {
   };
 }
 
+async function settleBeforeDeadline(
+  operation: Promise<unknown>,
+  milliseconds: number,
+): Promise<'settled' | 'expired'> {
+  const deadline = createDeadline(milliseconds);
+  try {
+    return await Promise.race([
+      operation.then(() => 'settled' as const),
+      deadline.promise.then(() => 'expired' as const),
+    ]);
+  } finally {
+    deadline.cancel();
+  }
+}
+
 export function createHttpServerRuntime(
   app: RequestListener,
   config: HttpServerConfig,
@@ -56,6 +71,37 @@ export function createHttpServerRuntime(
   let address: AddressInfo | undefined;
   let startPromise: Promise<AddressInfo> | undefined;
   let closePromise: Promise<void> | undefined;
+  let listenerClosePromise: Promise<void> | undefined;
+  let cancelStart: ((error: Error) => void) | undefined;
+
+  const closeListeningServer = async (): Promise<void> => {
+    if (server === undefined) return;
+
+    const totalDeadline = Date.now() + config.shutdownGraceMs;
+    const forcedReserveMs = Math.min(5_000, Math.max(1, Math.floor(config.shutdownGraceMs / 6)));
+    const gracefulBudgetMs = Math.max(1, config.shutdownGraceMs - forcedReserveMs);
+    const closeOperation = closeServer(server);
+    const gracefulOperation = Promise.all([closeOperation, activeRequests.whenEmpty()]);
+    server.closeIdleConnections();
+
+    const gracefulResult = await settleBeforeDeadline(gracefulOperation, gracefulBudgetMs);
+    if (gracefulResult === 'settled') return;
+
+    await activeRequests.closeAll();
+    server.closeAllConnections();
+    const forcedResult = await settleBeforeDeadline(
+      gracefulOperation,
+      Math.max(1, totalDeadline - Date.now()),
+    );
+    if (forcedResult === 'expired') {
+      throw new Error('HTTP server did not close after forced connection termination');
+    }
+  };
+
+  const ensureListenerClosed = (): Promise<void> => {
+    listenerClosePromise ??= closeListeningServer();
+    return listenerClosePromise;
+  };
 
   const start = (): Promise<AddressInfo> => {
     if (state === 'closed' || state === 'closing') {
@@ -67,15 +113,16 @@ export function createHttpServerRuntime(
     state = 'starting';
     startPromise = new Promise<AddressInfo>((resolve, reject) => {
       let settled = false;
-      const handleError = (error: Error): void => {
+      const handleError = (error: unknown): void => {
         if (!settled) {
           settled = true;
           state = 'closed';
-          reject(error);
+          reject(error instanceof Error ? error : new Error(String(error)));
           return;
         }
         reportInternalError(reportError, { phase: 'listener', error });
       };
+      cancelStart = handleError;
 
       try {
         server = serveFunction(app);
@@ -84,7 +131,22 @@ export function createHttpServerRuntime(
         server.keepAliveTimeout = 5_000;
         server.once('error', handleError);
         server.listen(config.port, config.host, () => {
-          if (settled || server === undefined) return;
+          if (settled) {
+            if ((state === 'closing' || state === 'closed') && server !== undefined) {
+              const lateServer = server;
+              void (listenerClosePromise?.catch(() => undefined) ?? Promise.resolve())
+                .then(async () => {
+                  if (!('listening' in lateServer) || lateServer.listening) {
+                    await closeServer(lateServer);
+                  }
+                })
+                .catch((error: unknown) => {
+                  reportInternalError(reportError, { phase: 'listener', error });
+                });
+            }
+            return;
+          }
+          if (server === undefined) return;
           const boundAddress = server.address();
           if (boundAddress === null || typeof boundAddress === 'string') {
             handleError(new Error('HTTP server did not bind to an IP address'));
@@ -106,47 +168,36 @@ export function createHttpServerRuntime(
   };
 
   const close = (): Promise<void> => {
-    if (state === 'closed') return closePromise ?? Promise.resolve();
+    if (state === 'closed' && server === undefined) return closePromise ?? Promise.resolve();
     if (closePromise !== undefined) return closePromise;
 
+    const wasStarting = state === 'starting';
     state = 'closing';
     readiness.markNotReady();
-    closePromise = (startPromise?.catch(() => undefined) ?? Promise.resolve())
-      .then(async () => {
-        if (server === undefined) return;
-        const totalDeadline = Date.now() + config.shutdownGraceMs;
-        const forcedReserveMs = Math.min(
-          5_000,
-          Math.max(1, Math.floor(config.shutdownGraceMs / 6)),
+    closePromise = (async () => {
+      let startupDeadlineError: Error | undefined;
+      if (wasStarting && startPromise !== undefined) {
+        const startupResult = await settleBeforeDeadline(
+          startPromise.then(
+            () => undefined,
+            () => undefined,
+          ),
+          config.shutdownGraceMs,
         );
-        const gracefulBudgetMs = Math.max(1, config.shutdownGraceMs - forcedReserveMs);
-        const closeOperation = closeServer(server);
-        const gracefulOperation = Promise.all([closeOperation, activeRequests.whenEmpty()]);
-        server.closeIdleConnections();
-        const gracefulDeadline = createDeadline(gracefulBudgetMs);
-        const result = await Promise.race([
-          gracefulOperation.then(() => 'closed' as const),
-          gracefulDeadline.promise.then(() => 'expired' as const),
-        ]);
-        gracefulDeadline.cancel();
-        if (result === 'closed') return;
-
-        await activeRequests.closeAll();
-        server.closeAllConnections();
-        const forcedDeadline = createDeadline(Math.max(1, totalDeadline - Date.now()));
-        const forced = await Promise.race([
-          gracefulOperation.then(() => 'closed' as const),
-          forcedDeadline.promise.then(() => 'expired' as const),
-        ]);
-        forcedDeadline.cancel();
-        if (forced === 'expired') {
-          throw new Error('HTTP server did not close after forced connection termination');
+        if (startupResult === 'expired') {
+          startupDeadlineError = new Error(
+            'HTTP server startup did not settle before the shutdown deadline',
+          );
+          cancelStart?.(startupDeadlineError);
         }
-      })
-      .finally(() => {
-        readiness.markNotReady();
-        state = 'closed';
-      });
+      }
+
+      await ensureListenerClosed();
+      if (startupDeadlineError !== undefined) throw startupDeadlineError;
+    })().finally(() => {
+      readiness.markNotReady();
+      state = 'closed';
+    });
     return closePromise;
   };
 
