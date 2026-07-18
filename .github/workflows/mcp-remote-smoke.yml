@@ -1,9 +1,6 @@
 name: MCP remote smoke
 
 on:
-  deployment_status:
-  schedule:
-    - cron: '*/15 * * * *'
   workflow_dispatch:
 
 permissions:
