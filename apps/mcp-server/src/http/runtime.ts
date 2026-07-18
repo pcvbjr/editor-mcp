@@ -1,9 +1,9 @@
+import { createServer, type RequestListener, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 
-import { serve, type ServerType } from '@hono/node-server';
-import type { Hono } from 'hono';
-
 import type { HttpServerConfig } from './config.js';
+import type { ReadinessController } from './readiness.js';
+import type { ActiveRequestRegistry } from './request-registry.js';
 import { reportInternalError, type InternalErrorReporter } from '../diagnostics.js';
 
 export type HttpRuntimeState = 'idle' | 'starting' | 'running' | 'closing' | 'closed';
@@ -14,18 +14,9 @@ export interface HttpServerRuntime {
   readonly close: () => Promise<void>;
 }
 
-export interface ServeOptions {
-  readonly fetch: (request: Request, env: unknown) => Response | Promise<Response>;
-  readonly hostname: string;
-  readonly port: number;
-}
+export type ServeFunction = (listener: RequestListener) => Server;
 
-export type ServeFunction = (
-  options: ServeOptions,
-  listeningListener?: (info: AddressInfo) => void,
-) => ServerType;
-
-function closeServer(server: ServerType): Promise<void> {
+function closeServer(server: Server): Promise<void> {
   return new Promise((resolve, reject) => {
     server.close((error?: Error) => {
       if (error && (!('code' in error) || error.code !== 'ERR_SERVER_NOT_RUNNING')) {
@@ -68,42 +59,56 @@ async function settleBeforeDeadline(
 }
 
 export function createHttpServerRuntime(
-  app: Hono,
+  app: RequestListener,
   config: HttpServerConfig,
-  serveFunction: ServeFunction = serve,
+  readiness: ReadinessController,
+  activeRequests: ActiveRequestRegistry,
+  serveFunction: ServeFunction = createServer,
   reportError?: InternalErrorReporter,
 ): HttpServerRuntime {
   let state: HttpRuntimeState = 'idle';
-  let server: ServerType | undefined;
+  let server: Server | undefined;
   let address: AddressInfo | undefined;
   let startPromise: Promise<AddressInfo> | undefined;
   let closePromise: Promise<void> | undefined;
   let listenerClosePromise: Promise<void> | undefined;
   let cancelStart: ((error: Error) => void) | undefined;
 
-  const closeListeningServer = async (): Promise<void> => {
-    if (server === undefined) {
-      return;
-    }
+  const closeListeningServer = async (
+    shutdownDeadline: number,
+    gracefulDeadline: number,
+  ): Promise<void> => {
+    if (server === undefined) return;
 
     const closeOperation = closeServer(server);
-    const gracefulResult = await settleBeforeDeadline(closeOperation, config.shutdownGraceMs);
+    const gracefulOperation = Promise.all([closeOperation, activeRequests.whenEmpty()]);
+    server.closeIdleConnections();
+
+    const gracefulResult = await settleBeforeDeadline(
+      gracefulOperation,
+      Math.max(0, gracefulDeadline - Date.now()),
+    );
     if (gracefulResult === 'settled') return;
 
-    if (!('closeAllConnections' in server)) {
-      throw new Error('HTTP server exceeded its graceful shutdown deadline');
-    }
+    await settleBeforeDeadline(
+      activeRequests.closeAll(),
+      Math.max(0, shutdownDeadline - Date.now()),
+    );
     server.closeAllConnections();
-
-    const forcedResult = await settleBeforeDeadline(closeOperation, config.shutdownGraceMs);
+    const forcedResult = await settleBeforeDeadline(
+      gracefulOperation,
+      Math.max(0, shutdownDeadline - Date.now()),
+    );
     if (forcedResult === 'expired') {
       throw new Error('HTTP server did not close after forced connection termination');
     }
-    throw new Error('HTTP server required forced connection termination');
   };
 
-  const ensureListenerClosed = (): Promise<void> => {
-    listenerClosePromise ??= closeListeningServer();
+  const ensureListenerClosed = (
+    shutdownDeadline: number,
+    gracefulDeadline: number,
+  ): Promise<void> => {
+    listenerClosePromise ??= closeListeningServer(shutdownDeadline, gracefulDeadline);
     return listenerClosePromise;
   };
 
@@ -111,100 +116,93 @@ export function createHttpServerRuntime(
     if (state === 'closed' || state === 'closing') {
       return Promise.reject(new Error(`Cannot start HTTP server in the ${state} state`));
     }
-    if (state === 'running') {
-      if (address === undefined) {
-        return Promise.reject(new Error('HTTP server is running without a bound address'));
-      }
-      return Promise.resolve(address);
-    }
-    if (state === 'starting') {
-      if (startPromise === undefined) {
-        return Promise.reject(new Error('HTTP server start is unavailable'));
-      }
-      return startPromise;
-    }
+    if (state === 'running' && address !== undefined) return Promise.resolve(address);
+    if (state === 'starting' && startPromise !== undefined) return startPromise;
 
     state = 'starting';
     startPromise = new Promise<AddressInfo>((resolve, reject) => {
       let settled = false;
-      const settleError = (error: unknown): void => {
-        if (settled) {
-          reportInternalError(reportError, { phase: 'listener', error });
+      const handleError = (error: unknown): void => {
+        if (!settled) {
+          settled = true;
+          state = 'closed';
+          reject(error instanceof Error ? error : new Error(String(error)));
           return;
         }
-        settled = true;
-        state = 'closed';
-        reject(error instanceof Error ? error : new Error(String(error)));
+        reportInternalError(reportError, { phase: 'listener', error });
       };
-      cancelStart = settleError;
+      cancelStart = handleError;
 
       try {
-        server = serveFunction(
-          { fetch: app.fetch, hostname: config.host, port: config.port },
-          (listeningAddress) => {
-            if (settled) {
-              // A pre-listen close may report ERR_SERVER_NOT_RUNNING before Node later binds.
-              // Chain a second close only if that late listener is actually active.
-              if ((state === 'closing' || state === 'closed') && server !== undefined) {
-                const lateServer = server;
-                void (listenerClosePromise?.catch(() => undefined) ?? Promise.resolve())
-                  .then(async () => {
-                    if (!('listening' in lateServer) || lateServer.listening) {
-                      await closeServer(lateServer);
-                    }
-                  })
-                  .catch((error: unknown) => {
-                    reportInternalError(reportError, { phase: 'listener', error });
-                  });
-              }
-              return;
+        server = serveFunction(app);
+        server.headersTimeout = 10_000;
+        server.requestTimeout = 30_000;
+        server.keepAliveTimeout = 5_000;
+        server.once('error', handleError);
+        server.listen(config.port, config.host, () => {
+          if (settled) {
+            if ((state === 'closing' || state === 'closed') && server !== undefined) {
+              const lateServer = server;
+              void (listenerClosePromise?.catch(() => undefined) ?? Promise.resolve())
+                .then(async () => {
+                  if (!('listening' in lateServer) || lateServer.listening) {
+                    await closeServer(lateServer);
+                  }
+                })
+                .catch((error: unknown) => {
+                  reportInternalError(reportError, { phase: 'listener', error });
+                });
             }
-            settled = true;
-            address = listeningAddress;
-            if (state === 'closing') {
-              resolve(listeningAddress);
-              return;
-            }
+            return;
+          }
+          if (server === undefined) return;
+          const boundAddress = server.address();
+          if (boundAddress === null || typeof boundAddress === 'string') {
+            handleError(new Error('HTTP server did not bind to an IP address'));
+            return;
+          }
+          settled = true;
+          address = boundAddress;
+          if (state !== 'closing') {
             state = 'running';
-            resolve(listeningAddress);
-          },
-        );
-        server.once('error', settleError);
-      } catch (error) {
-        settleError(error);
+            readiness.markReady();
+          }
+          resolve(boundAddress);
+        });
+      } catch (error: unknown) {
+        handleError(error instanceof Error ? error : new Error(String(error)));
       }
     });
-
     return startPromise;
   };
 
   const close = (): Promise<void> => {
+    if (state === 'closed' && server === undefined) return closePromise ?? Promise.resolve();
     if (closePromise !== undefined) return closePromise;
-    if (state === 'closed' && server === undefined) return Promise.resolve();
 
     const wasStarting = state === 'starting';
     state = 'closing';
+    readiness.markNotReady();
+    const shutdownDeadline = Date.now() + config.shutdownGraceMs;
+    const forcedReserveMs = Math.min(5_000, Math.max(1, Math.floor(config.shutdownGraceMs / 6)));
+    const gracefulDeadline = shutdownDeadline - forcedReserveMs;
     closePromise = (async () => {
-      let startupDeadlineError: Error | undefined;
       if (wasStarting && startPromise !== undefined) {
         const startupResult = await settleBeforeDeadline(
           startPromise.then(
             () => undefined,
             () => undefined,
           ),
-          config.shutdownGraceMs,
+          Math.max(0, gracefulDeadline - Date.now()),
         );
         if (startupResult === 'expired') {
-          startupDeadlineError = new Error(
-            'HTTP server startup did not settle before the shutdown deadline',
-          );
-          cancelStart?.(startupDeadlineError);
+          cancelStart?.(new Error('HTTP server startup cancelled during shutdown'));
         }
       }
 
-      await ensureListenerClosed();
-      if (startupDeadlineError !== undefined) throw startupDeadlineError;
+      await ensureListenerClosed(shutdownDeadline, gracefulDeadline);
     })().finally(() => {
+      readiness.markNotReady();
       state = 'closed';
     });
     return closePromise;

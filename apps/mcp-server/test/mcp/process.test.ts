@@ -22,6 +22,7 @@ function createProcessControl() {
       timeoutListeners.set(id, listener);
       return () => timeoutListeners.delete(id);
     },
+    writeStdout: vi.fn(),
     writeStderr: vi.fn(),
     setExitCode: vi.fn(),
     forceExit: vi.fn(),

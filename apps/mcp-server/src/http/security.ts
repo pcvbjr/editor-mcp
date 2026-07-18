@@ -1,43 +1,89 @@
-import type { MiddlewareHandler } from 'hono';
+import { randomUUID } from 'node:crypto';
+
+import { hostHeaderValidation } from '@modelcontextprotocol/sdk/server/middleware/hostHeaderValidation.js';
+import type { NextFunction, Request, RequestHandler, Response } from 'express';
 
 import { parseHostAuthority } from './authority.js';
 import type { HttpServerConfig } from './config.js';
-import { parseOrigin } from './origin.js';
+import { parseSerializedHttpOrigin } from './origin.js';
 
-function hostMatches(requestHost: string, allowedHost: string): boolean {
-  const requestAuthority = parseHostAuthority(requestHost);
-  const allowedAuthority = parseHostAuthority(allowedHost);
-  if (requestAuthority === undefined || allowedAuthority === undefined) return false;
-  return (
-    requestAuthority.hostname === allowedAuthority.hostname &&
-    (allowedAuthority.port === undefined || requestAuthority.port === allowedAuthority.port)
-  );
+const railwayHealthHost = 'healthcheck.railway.app';
+const requestIdPattern = /^[A-Za-z0-9_-]{1,128}$/u;
+
+function allowedHostnames(authorities: readonly string[]): string[] {
+  return authorities.flatMap((authority) => {
+    const parsed = parseHostAuthority(authority);
+    return parsed === undefined
+      ? []
+      : [parsed.hostname.includes(':') ? `[${parsed.hostname}]` : parsed.hostname];
+  });
 }
 
-function isAllowedHost(request: Request, config: HttpServerConfig): boolean {
-  const requestHost = request.headers.get('host') ?? new URL(request.url).host;
-  return config.allowedHosts.some((allowedHost) => hostMatches(requestHost, allowedHost));
+function createAuthorityValidation(authorities: readonly string[]): RequestHandler {
+  const validateHostname = hostHeaderValidation(allowedHostnames(authorities));
+  return (request, response, next): void => {
+    validateHostname(request, response, () => {
+      const requestAuthority = parseHostAuthority(request.headers.host ?? '');
+      const allowed =
+        requestAuthority !== undefined &&
+        authorities.some((authority) => {
+          const configured = parseHostAuthority(authority);
+          return (
+            configured?.hostname === requestAuthority.hostname &&
+            (configured.port === undefined || configured.port === requestAuthority.port)
+          );
+        });
+      if (!allowed) {
+        response.status(403).json({
+          jsonrpc: '2.0',
+          error: { code: -32_000, message: 'Invalid Host authority' },
+          id: null,
+        });
+        return;
+      }
+      next();
+    });
+  };
 }
 
-function isAllowedOrigin(request: Request, config: HttpServerConfig): boolean {
-  const requestOrigin = request.headers.get('origin');
-  if (requestOrigin === null) {
-    return true;
-  }
-
-  const normalizedOrigin = parseOrigin(requestOrigin);
-  return (
-    normalizedOrigin !== undefined &&
-    config.allowedOrigins.some((allowedOrigin) => allowedOrigin === normalizedOrigin)
-  );
+export function createMcpHostValidation(config: HttpServerConfig): RequestHandler {
+  return createAuthorityValidation(config.allowedHosts);
 }
 
-export function createSecurityMiddleware(config: HttpServerConfig): MiddlewareHandler {
-  return async (context, next) => {
-    if (!isAllowedHost(context.req.raw, config) || !isAllowedOrigin(context.req.raw, config)) {
-      return context.json({ error: 'Forbidden' }, 403);
+export function createHealthHostValidation(config: HttpServerConfig): RequestHandler {
+  return createAuthorityValidation([...config.allowedHosts, railwayHealthHost]);
+}
+
+export function createOriginValidation(config: HttpServerConfig): RequestHandler {
+  return (request: Request, response: Response, next: NextFunction): void => {
+    const requestOrigin = request.header('origin');
+    if (requestOrigin === undefined) {
+      next();
+      return;
     }
 
-    return next();
+    const normalized = parseSerializedHttpOrigin(requestOrigin);
+    if (
+      normalized === undefined ||
+      requestOrigin !== normalized ||
+      !config.allowedOrigins.includes(normalized)
+    ) {
+      response.status(403).json({ error: 'Forbidden' });
+      return;
+    }
+    next();
   };
+}
+
+export function requestIdMiddleware(
+  request: Request,
+  response: Response,
+  next: NextFunction,
+): void {
+  const candidate = request.header('x-railway-request-id');
+  const requestId =
+    candidate !== undefined && requestIdPattern.test(candidate) ? candidate : randomUUID();
+  response.setHeader('x-request-id', requestId);
+  response.locals['requestId'] = requestId;
+  next();
 }

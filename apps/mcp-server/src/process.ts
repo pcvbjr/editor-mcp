@@ -9,6 +9,7 @@ export interface ProcessControl {
   readonly onSignal: (signal: SupportedTerminationSignal, listener: () => void) => () => void;
   readonly onStdinEnd: (listener: () => void) => () => void;
   readonly scheduleTimeout: (listener: () => void, milliseconds: number) => () => void;
+  readonly writeStdout: (message: string) => void;
   readonly writeStderr: (message: string) => void;
   readonly setExitCode: (code: number) => void;
   readonly forceExit: (code: number) => void;
@@ -41,6 +42,9 @@ export function createNodeProcessControl(): ProcessControl {
       return () => {
         clearTimeout(timer);
       };
+    },
+    writeStdout(message) {
+      process.stdout.write(message);
     },
     writeStderr(message) {
       process.stderr.write(message);

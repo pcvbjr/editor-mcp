@@ -1,92 +1,155 @@
+import { request as httpRequest } from 'node:http';
 import { describe, expect, it } from 'vitest';
 
-import { createHttpApp } from '../../src/http/app.js';
 import { createHttpServerConfig } from '../../src/http/config.js';
+import { createTestHttpHarness } from '../support/http-test-harness.js';
 
 const config = createHttpServerConfig({
+  port: 0,
   allowedHosts: ['127.0.0.1', 'localhost'],
   allowedOrigins: ['https://agent.example'],
 });
-const app = createHttpApp({ config });
+
+function requestWithAuthority(url: URL, authority: string): Promise<number | undefined> {
+  return new Promise((resolve, reject) => {
+    const request = httpRequest(url, { headers: { host: authority } }, (response) => {
+      response.resume();
+      response.once('end', () => {
+        resolve(response.statusCode);
+      });
+    });
+    request.once('error', reject);
+    request.end();
+  });
+}
 
 describe('HTTP request security', () => {
-  it('allows native clients without Origin and ignores the port in an allowed hostname', async () => {
-    const response = await app.request('http://127.0.0.1:43123/healthz');
-
-    expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toEqual({ status: 'ok' });
-  });
-
-  it('allows an exact configured origin', async () => {
-    const response = await app.request('http://127.0.0.1:43123/healthz', {
-      headers: { Origin: 'https://agent.example' },
-    });
-
-    expect(response.status).toBe(200);
+  it('allows native clients and an exact configured origin', async () => {
+    const harness = createTestHttpHarness({ config });
+    const baseUrl = await harness.start();
+    try {
+      expect((await fetch(new URL('/healthz', baseUrl))).status).toBe(200);
+      expect(
+        (
+          await fetch(new URL('/healthz', baseUrl), {
+            headers: { origin: 'https://agent.example' },
+          })
+        ).status,
+      ).toBe(200);
+    } finally {
+      await harness.close();
+    }
   });
 
   it.each([
-    ['http://evil.example/healthz', undefined],
-    ['http://127.0.0.1:43123/healthz', { Origin: 'https://evil.example' }],
-    ['http://127.0.0.1:43123/healthz', { Origin: 'null' }],
-    ['http://127.0.0.1:43123/healthz', { Origin: 'https://agent.example.evil' }],
-  ] as const)('rejects an untrusted request', async (url, headers) => {
-    const response =
-      headers === undefined ? await app.request(url) : await app.request(url, { headers });
-
-    expect(response.status).toBe(403);
-    await expect(response.json()).resolves.toEqual({ error: 'Forbidden' });
-  });
-
-  it.each(['user@localhost', 'evil@localhost:43123', 'localhost/path', 'localhost?query'])(
-    'rejects malformed Host authority %s',
-    async (host) => {
-      const response = await app.request('http://127.0.0.1:43123/healthz', {
-        headers: { Host: host },
-      });
-
+    [{ origin: 'https://evil.example' }],
+    [{ origin: 'null' }],
+    [{ origin: 'https://agent.example.evil' }],
+    [{ origin: 'https://agent.example/private/path' }],
+    [{ origin: 'https://agent.example?token=secret' }],
+    [{ origin: 'https://user:password@agent.example' }],
+  ])('rejects an untrusted request with headers %o', async (headers) => {
+    const harness = createTestHttpHarness({ config });
+    const baseUrl = await harness.start();
+    try {
+      const response = await fetch(new URL('/healthz', baseUrl), { headers });
       expect(response.status).toBe(403);
-    },
-  );
+    } finally {
+      await harness.close();
+    }
+  });
 
-  it.each([
-    'https://agent.example/path',
-    'https://agent.example?query',
-    'https://agent.example#fragment',
-    'https://user@agent.example',
-  ])('rejects malformed Origin value %s', async (origin) => {
-    const response = await app.request('http://127.0.0.1:43123/healthz', {
-      headers: { Origin: origin },
+  it('rejects an untrusted Host authority', async () => {
+    const harness = createTestHttpHarness({ config });
+    const baseUrl = await harness.start();
+    try {
+      await expect(
+        requestWithAuthority(new URL('/healthz', baseUrl), 'evil.example'),
+      ).resolves.toBe(403);
+    } finally {
+      await harness.close();
+    }
+  });
+
+  it('enforces a configured Host port without weakening SDK hostname validation', async () => {
+    const harness = createTestHttpHarness({
+      config: createHttpServerConfig({
+        port: 0,
+        allowedHosts: ['127.0.0.1:4444'],
+      }),
     });
-
-    expect(response.status).toBe(403);
+    const baseUrl = await harness.start();
+    try {
+      await expect(
+        requestWithAuthority(new URL('/healthz', baseUrl), '127.0.0.1:5555'),
+      ).resolves.toBe(403);
+      await expect(
+        requestWithAuthority(new URL('/healthz', baseUrl), '127.0.0.1:4444'),
+      ).resolves.toBe(200);
+    } finally {
+      await harness.close();
+    }
   });
 
-  it('honors configured Host ports and ignores forwarded host claims', async () => {
-    const portConfig = createHttpServerConfig({ allowedHosts: ['localhost:43123'] });
-    const portApp = createHttpApp({ config: portConfig });
+  it('supports exact-origin browser discovery and MCP preflight', async () => {
+    const harness = createTestHttpHarness({ config });
+    const baseUrl = await harness.start();
+    try {
+      const metadata = await fetch(new URL('/.well-known/oauth-protected-resource/mcp', baseUrl), {
+        headers: { origin: 'https://agent.example' },
+      });
+      // SDK v1.29 owns metadata CORS and emits `*`; the preceding exact-origin
+      // validator ensures only configured browser origins can reach the router.
+      expect(metadata.headers.get('access-control-allow-origin')).toBe('*');
 
-    expect((await portApp.request('http://localhost:43123/healthz')).status).toBe(200);
-    expect((await portApp.request('http://localhost:43124/healthz')).status).toBe(403);
-    expect(
-      (
-        await app.request('http://evil.example/healthz', {
-          headers: { 'X-Forwarded-Host': 'localhost' },
-        })
-      ).status,
-    ).toBe(403);
-    expect(
-      (
-        await app.request('http://localhost/healthz', {
-          headers: { 'X-Forwarded-Host': 'evil.example' },
-        })
-      ).status,
-    ).toBe(200);
+      const preflight = await fetch(new URL('/mcp', baseUrl), {
+        method: 'OPTIONS',
+        headers: {
+          origin: 'https://agent.example',
+          'access-control-request-method': 'POST',
+          'access-control-request-headers': 'Authorization, Content-Type, MCP-Protocol-Version',
+        },
+      });
+      expect(preflight.status).toBe(204);
+      expect(preflight.headers.get('access-control-allow-origin')).toBe('https://agent.example');
+      expect(preflight.headers.get('access-control-allow-headers')).toContain('Authorization');
+      expect(preflight.headers.get('access-control-expose-headers')).toContain('WWW-Authenticate');
+    } finally {
+      await harness.close();
+    }
   });
 
-  it('does not emit permissive CORS headers', async () => {
-    const response = await app.request('http://127.0.0.1:43123/healthz');
+  it('accepts Railway health authority only on health routes', async () => {
+    const harness = createTestHttpHarness({ config });
+    const baseUrl = await harness.start();
+    try {
+      const health = await requestWithAuthority(
+        new URL('/healthz', baseUrl),
+        'healthcheck.railway.app',
+      );
+      const metadata = await requestWithAuthority(
+        new URL('/.well-known/oauth-protected-resource/mcp', baseUrl),
+        'healthcheck.railway.app',
+      );
+      expect(health).toBe(200);
+      expect(metadata).toBe(403);
+    } finally {
+      await harness.close();
+    }
+  });
 
-    expect(response.headers.get('access-control-allow-origin')).toBeNull();
+  it('replaces invalid request IDs and emits no permissive CORS headers', async () => {
+    const harness = createTestHttpHarness({ config });
+    const baseUrl = await harness.start();
+    try {
+      const response = await fetch(new URL('/healthz', baseUrl), {
+        headers: { 'x-railway-request-id': 'invalid request id' },
+      });
+      expect(response.headers.get('x-request-id')).toMatch(/^[0-9a-f-]{36}$/u);
+      expect(response.headers.get('access-control-allow-origin')).toBeNull();
+      expect(response.headers.get('x-powered-by')).toBeNull();
+    } finally {
+      await harness.close();
+    }
   });
 });

@@ -1,4 +1,4 @@
-export function parseOrigin(value: string): string | undefined {
+export function parseSerializedHttpOrigin(value: string): string | undefined {
   if (value.length === 0 || value !== value.trim() || value === 'null' || value.includes('*')) {
     return undefined;
   }

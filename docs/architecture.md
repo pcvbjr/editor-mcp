@@ -943,7 +943,7 @@ Build with production package boundaries and test-first contracts:
 
 The following must be resolved before committing to a production architecture:
 
-- Is the primary product an open-source library, MCP server, hosted service, or all three in stages?
+- Is the primary product a private MCP server, hosted service, or both in stages?
 - What is the concrete advantage over Tiptap Server AI Toolkit?
 - What exact durable tracked-change representation and metadata layout will the service certify?
 - Does v0 require self-hosting and strict data residency?

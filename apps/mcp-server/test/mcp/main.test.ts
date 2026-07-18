@@ -15,6 +15,7 @@ function createProcessControl() {
       };
     },
     scheduleTimeout: () => () => undefined,
+    writeStdout: vi.fn(),
     writeStderr: vi.fn(),
     setExitCode: vi.fn(),
     forceExit: vi.fn(),
@@ -38,14 +39,16 @@ describe('MCP main composition', () => {
       close,
     };
     const processControl = createProcessControl();
+    const register = vi.fn();
 
-    await main({ transport, processControl: processControl.control });
+    await main({ transport, processControl: processControl.control, register });
     processControl.emitStdinEnd();
 
     await vi.waitFor(() => {
       expect(close).toHaveBeenCalledOnce();
     });
     expect(start).toHaveBeenCalledOnce();
+    expect(register).toHaveBeenCalledOnce();
     expect(processControl.control.writeStderr).not.toHaveBeenCalled();
   });
 });

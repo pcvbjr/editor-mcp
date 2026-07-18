@@ -1,7 +1,7 @@
 {
   "name": "@editor-mcp/mcp-server",
   "version": "0.0.0",
-  "description": "Private local MCP server for Editor MCP document mutation capabilities.",
+  "description": "Private local and remote MCP server for Editor MCP document mutation capabilities.",
   "private": true,
   "license": "UNLICENSED",
   "type": "module",
@@ -39,12 +39,21 @@
     "test:integration": "pnpm build && vitest run --root ../.. --config vitest.config.ts apps/mcp-server/test/mcp apps/mcp-server/test/http",
     "test:http": "vitest run --root ../.. --config vitest.config.ts apps/mcp-server/test/http",
     "test:package": "tsx test/mcp/package-install.integration.ts",
+    "test:remote": "tsx test/mcp/remote.integration.ts",
     "typecheck": "tsc -p tsconfig.json --noEmit --pretty false"
   },
   "dependencies": {
-    "@hono/node-server": "1.19.14",
     "@modelcontextprotocol/sdk": "1.29.0",
-    "hono": "4.12.30",
+    "cors": "2.8.6",
+    "express": "5.2.1",
+    "express-rate-limit": "8.5.2",
+    "jose": "6.2.3",
+    "pino": "10.3.1",
+    "pino-http": "11.0.0",
     "zod": "4.4.3"
+  },
+  "devDependencies": {
+    "@types/cors": "2.8.19",
+    "@types/express": "5.0.6"
   }
 }
