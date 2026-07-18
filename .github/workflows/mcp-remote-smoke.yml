@@ -8,10 +8,6 @@ permissions:
 
 jobs:
   production-smoke:
-    if: >-
-      github.event_name != 'deployment_status' ||
-      (github.event.deployment_status.state == 'success' &&
-      github.event.deployment.environment == 'production')
     runs-on: ubuntu-latest
     environment: mcp-production-smoke
     timeout-minutes: 5
