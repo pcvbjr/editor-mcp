@@ -1,0 +1,17 @@
+default_permissions = "editor-mcp-development"
+
+[permissions.editor-mcp-development]
+description = "Workspace development with loopback networking for integration tests."
+extends = ":workspace"
+
+[permissions.editor-mcp-development.network]
+enabled = true
+allow_local_binding = true
+
+[permissions.editor-mcp-development.network.domains]
+"localhost" = "allow"
+"127.0.0.1" = "allow"
+"::1" = "allow"
+
+[shell_environment_policy]
+experimental_use_profile = true

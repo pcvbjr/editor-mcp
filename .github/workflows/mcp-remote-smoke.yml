@@ -1,0 +1,28 @@
+name: MCP remote smoke
+
+on:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  production-smoke:
+    runs-on: ubuntu-latest
+    environment: mcp-production-smoke
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.9.0
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22.13.0
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm --filter @editor-mcp/mcp-server test:remote
+        env:
+          MCP_SERVER_URL: ${{ vars.MCP_SERVER_URL }}
+          MCP_SMOKE_CLIENT_ID: ${{ secrets.MCP_SMOKE_CLIENT_ID }}
+          MCP_SMOKE_CLIENT_SECRET: ${{ secrets.MCP_SMOKE_CLIENT_SECRET }}

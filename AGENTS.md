@@ -4,6 +4,8 @@
 
 - If implementation evidence challenges an accepted decision, explicitly reopen or supersede it
   rather than silently diverging.
+- Use `make check` as the canonical verification gate. See `docs/development-environment.md` for
+  the supported toolchain, Codex loopback profile, and environment-failure classification.
 - Keep this file concise. Put feature- and version-specific rules in the nearest design document,
   package, or nested `AGENTS.md`.
 

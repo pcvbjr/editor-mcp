@@ -8,21 +8,20 @@
     "node": ">=22.13.0"
   },
   "scripts": {
-    "build": "tsc -b --stopBuildOnErrors",
-    "clean": "tsc -b --clean",
+    "build": "pnpm -r --if-present run build",
+    "clean": "pnpm -r --if-present run clean",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "lint": "eslint . --max-warnings=0",
-    "test": "vitest run --passWithNoTests",
-    "test:coverage": "vitest run --coverage --passWithNoTests",
+    "test": "pnpm build && vitest run",
+    "test:coverage": "pnpm build && vitest run --coverage",
     "test:watch": "vitest",
+    "mcp:inspect": "pnpm --filter @editor-mcp/mcp-server build && pnpm exec mcp-inspector node apps/mcp-server/dist/cli.js",
+    "mcp:http": "pnpm --filter @editor-mcp/mcp-server build && pnpm --filter @editor-mcp/mcp-server start:http",
     "typecheck": "tsc -b --pretty false",
-    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm build"
+    "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm --filter @editor-mcp/mcp-server test:package"
   },
   "dependencies": {
-    "@hocuspocus/server": "^4.4.0",
-    "@hocuspocus/transformer": "^4.4.0",
-    "@modelcontextprotocol/sdk": "^1.29.0",
     "@tiptap/core": "3.28.0",
     "@tiptap/extension-image": "3.28.0",
     "@tiptap/extension-list": "3.28.0",
@@ -38,7 +37,7 @@
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
-    "@fast-check/vitest": "0.4.1",
+    "@modelcontextprotocol/inspector": "0.21.2",
     "@types/node": "^22.20.1",
     "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "4.1.10",

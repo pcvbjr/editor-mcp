@@ -1,6 +1,7 @@
 import type { Readable, Writable } from 'node:stream';
 
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
+import type { AuthInfo } from '@modelcontextprotocol/sdk/server/auth/types.js';
 import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js';
 
 import {
@@ -20,6 +21,8 @@ import {
   documentReadResultV1Schema,
 } from '@editor-mcp/protocol';
 
+import { createMcpServer, type CapabilityRegistrar, type CapabilityRegistry } from './server.js';
+
 export const READ_TOOL_NAME = 'editor.document.read.v1';
 export const APPLY_TOOL_NAME = 'editor.document.apply_edits.v1';
 
@@ -30,7 +33,10 @@ export interface McpEditorService {
 
 export interface EditorMcpServerOptions {
   readonly service: McpEditorService;
-  readonly authorization: (signal?: AbortSignal) => Promise<AuthorizationContext>;
+  readonly authorization: (
+    signal?: AbortSignal,
+    authInfo?: AuthInfo,
+  ) => Promise<AuthorizationContext>;
   readonly name?: string;
   readonly version?: string;
 }
@@ -75,13 +81,11 @@ function variable(variables: Record<string, string | string[]>, name: string): s
   return value;
 }
 
-export function createEditorMcpServer(options: EditorMcpServerOptions): McpServer {
-  const server = new McpServer({
-    name: options.name ?? 'editor-mcp',
-    version: options.version ?? '0.0.0',
-  });
-
-  server.registerTool(
+function registerEditorCapabilities(
+  registry: CapabilityRegistry,
+  options: EditorMcpServerOptions,
+): void {
+  registry.registerTool(
     READ_TOOL_NAME,
     {
       title: 'Read editor document',
@@ -97,7 +101,7 @@ export function createEditorMcpServer(options: EditorMcpServerOptions): McpServe
     },
     async (input, extra) => {
       try {
-        const authorization = await options.authorization(extra.signal);
+        const authorization = await options.authorization(extra.signal, extra.authInfo);
         const result = documentReadResultV1Schema.parse(
           await options.service.readDocumentV1(input, {
             authorization,
@@ -111,7 +115,7 @@ export function createEditorMcpServer(options: EditorMcpServerOptions): McpServe
     },
   );
 
-  server.registerTool(
+  registry.registerTool(
     APPLY_TOOL_NAME,
     {
       title: 'Apply semantic editor edits',
@@ -128,7 +132,7 @@ export function createEditorMcpServer(options: EditorMcpServerOptions): McpServe
     },
     async (input, extra) => {
       try {
-        const authorization = await options.authorization(extra.signal);
+        const authorization = await options.authorization(extra.signal, extra.authInfo);
         const parsedInput = applyEditsRequestV1Schema.parse(input);
         assertChangeModeAllowed(parsedInput.changeMode, authorization);
         const result = applyEditsResultSchema.parse(
@@ -144,7 +148,7 @@ export function createEditorMcpServer(options: EditorMcpServerOptions): McpServe
     },
   );
 
-  server.registerResource(
+  registry.registerResource(
     'editor-outline',
     new ResourceTemplate(
       'editor://tenants/{tenantId}/documents/{documentId}/incarnations/{documentIncarnation}/outline',
@@ -157,7 +161,7 @@ export function createEditorMcpServer(options: EditorMcpServerOptions): McpServe
     },
     async (uri, variables, extra) => {
       try {
-        const authorization = await options.authorization(extra.signal);
+        const authorization = await options.authorization(extra.signal, extra.authInfo);
         const tenantId = variable(variables, 'tenantId');
         if (tenantId !== authorization.tenantId) {
           throw new DomainError(
@@ -208,7 +212,7 @@ export function createEditorMcpServer(options: EditorMcpServerOptions): McpServe
     },
   );
 
-  server.registerResource(
+  registry.registerResource(
     'editor-block',
     new ResourceTemplate(
       'editor://tenants/{tenantId}/documents/{documentId}/incarnations/{documentIncarnation}/blocks/{blockId}',
@@ -221,7 +225,7 @@ export function createEditorMcpServer(options: EditorMcpServerOptions): McpServe
     },
     async (uri, variables, extra) => {
       try {
-        const authorization = await options.authorization(extra.signal);
+        const authorization = await options.authorization(extra.signal, extra.authInfo);
         const tenantId = variable(variables, 'tenantId');
         if (tenantId !== authorization.tenantId) {
           throw new DomainError(
@@ -273,8 +277,22 @@ export function createEditorMcpServer(options: EditorMcpServerOptions): McpServe
       }
     },
   );
+}
 
-  return server;
+export function createEditorCapabilityRegistrar(
+  options: EditorMcpServerOptions,
+): CapabilityRegistrar {
+  return (registry) => {
+    registerEditorCapabilities(registry, options);
+  };
+}
+
+export function createEditorMcpServer(options: EditorMcpServerOptions): McpServer {
+  return createMcpServer({
+    name: options.name ?? 'editor-mcp',
+    version: options.version ?? '0.0.0',
+    register: createEditorCapabilityRegistrar(options),
+  });
 }
 
 export async function runStdioServer(

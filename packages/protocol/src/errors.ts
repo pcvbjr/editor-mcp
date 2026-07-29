@@ -31,6 +31,7 @@ export const DOMAIN_ERROR_CODES = [
 ] as const;
 
 export const domainErrorCodeSchema = z.enum(DOMAIN_ERROR_CODES);
+export const editorErrorCodeSchema = domainErrorCodeSchema;
 
 export const conflictTargetSchema = z
   .object({
@@ -87,8 +88,20 @@ export const publicErrorSchema = z
   })
   .strict();
 
+export const editorErrorEnvelopeSchema = z
+  .object({
+    errorVersion: z.literal(1),
+    code: editorErrorCodeSchema,
+    message: z.string().trim().min(1).max(1_000),
+    retryable: z.boolean(),
+    correlationId: z.string().trim().min(1).max(256).optional(),
+  })
+  .strict();
+
 export type DomainErrorCode = z.infer<typeof domainErrorCodeSchema>;
+export type EditorErrorCode = DomainErrorCode;
 export type ConflictTarget = z.infer<typeof conflictTargetSchema>;
 export type ConflictRecovery = z.infer<typeof conflictRecoverySchema>;
 export type EditConflict = z.infer<typeof editConflictSchema>;
 export type PublicError = z.infer<typeof publicErrorSchema>;
+export type EditorErrorEnvelope = z.infer<typeof editorErrorEnvelopeSchema>;

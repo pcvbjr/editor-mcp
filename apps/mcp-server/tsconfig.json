@@ -1,8 +1,11 @@
 {
   "extends": "../../tsconfig.base.json",
   "compilerOptions": {
+    "composite": true,
     "outDir": "dist",
+    "resolveJsonModule": true,
     "rootDir": "src",
+    "tsBuildInfoFile": "tsconfig.tsbuildinfo",
     "types": ["node"]
   },
   "references": [{ "path": "../../packages/core" }, { "path": "../../packages/protocol" }],

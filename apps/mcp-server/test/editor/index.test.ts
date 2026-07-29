@@ -18,7 +18,7 @@ import {
   createEditorMcpServer,
   runStdioServer,
   type McpEditorService,
-} from './index.js';
+} from '../../src/index.js';
 
 const authorization: AuthorizationContext = {
   tenantId: 'tenant-1',
