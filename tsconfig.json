@@ -11,5 +11,17 @@
     "examples/**/*.ts",
     "test/**/*.ts",
     "vitest.config.ts"
+  ],
+  "references": [
+    { "path": "./packages/protocol" },
+    { "path": "./packages/adapter-tiptap-hocuspocus" },
+    { "path": "./packages/fixtures" },
+    { "path": "./packages/core" },
+    { "path": "./packages/runtime-hocuspocus" },
+    { "path": "./packages/document-service" },
+    { "path": "./apps/mcp-server" },
+    { "path": "./apps/reference-server" },
+    { "path": "./apps/visual-test-harness" },
+    { "path": "./apps/demo" }
   ]
 }

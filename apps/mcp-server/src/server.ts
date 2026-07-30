@@ -6,6 +6,7 @@ import type { ExecutionTracker } from './execution-tracker.js';
 
 export interface CapabilityRegistry {
   readonly registerTool: McpServer['registerTool'];
+  readonly registerResource: McpServer['registerResource'];
 }
 
 export type CapabilityRegistrar = (registry: CapabilityRegistry) => void;
@@ -62,6 +63,7 @@ function createCapabilityRegistry(
 
   return {
     registerTool: safeRegisterTool as McpServer['registerTool'],
+    registerResource: server.registerResource.bind(server),
   };
 }
 

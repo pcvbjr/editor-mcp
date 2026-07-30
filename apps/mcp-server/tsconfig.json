@@ -8,5 +8,6 @@
     "tsBuildInfoFile": "tsconfig.tsbuildinfo",
     "types": ["node"]
   },
+  "references": [{ "path": "../../packages/core" }, { "path": "../../packages/protocol" }],
   "include": ["src/**/*.ts"]
 }

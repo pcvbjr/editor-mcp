@@ -18,7 +18,9 @@
     "test:watch": "vitest",
     "mcp:inspect": "pnpm --filter @editor-mcp/mcp-server build && pnpm exec mcp-inspector node apps/mcp-server/dist/cli.js",
     "mcp:http": "pnpm --filter @editor-mcp/mcp-server build && pnpm --filter @editor-mcp/mcp-server start:http",
-    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "demo": "pnpm --filter @editor-mcp/demo build && NODE_ENV=production pnpm --filter @editor-mcp/demo start",
+    "demo:dev": "pnpm --filter @editor-mcp/demo dev",
+    "typecheck": "tsc -b --pretty false",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm --filter @editor-mcp/mcp-server test:package"
   },
   "dependencies": {
@@ -31,12 +33,15 @@
     "@tiptap/pm": "3.28.0",
     "@tiptap/starter-kit": "3.28.0",
     "happy-dom": "^20.8.9",
+    "ws": "^8.21.1",
+    "yjs": "^13.6.31",
     "zod": "^4.4.3"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@modelcontextprotocol/inspector": "0.21.2",
     "@types/node": "^22.20.1",
+    "@types/ws": "^8.18.1",
     "@vitest/coverage-v8": "4.1.10",
     "@vitest/eslint-plugin": "^1.6.23",
     "eslint": "^10.7.0",

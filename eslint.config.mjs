@@ -36,6 +36,14 @@ export default tseslint.config(
     },
     rules: {
       ...vitest.configs.recommended.rules,
+      '@typescript-eslint/no-unused-vars': ['error', { argsIgnorePattern: '^_' }],
+      '@typescript-eslint/require-await': 'off',
+    },
+  },
+  {
+    files: ['apps/demo/client/**/*.ts', 'apps/demo/client/**/*.tsx'],
+    languageOptions: {
+      globals: globals.browser,
     },
   },
   prettier,

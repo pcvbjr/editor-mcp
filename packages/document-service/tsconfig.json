@@ -1,0 +1,16 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist",
+    "rootDir": "src",
+    "types": ["node"]
+  },
+  "references": [
+    { "path": "../adapter-tiptap-hocuspocus" },
+    { "path": "../core" },
+    { "path": "../fixtures" },
+    { "path": "../protocol" },
+    { "path": "../runtime-hocuspocus" }
+  ],
+  "include": ["src/**/*.ts"]
+}

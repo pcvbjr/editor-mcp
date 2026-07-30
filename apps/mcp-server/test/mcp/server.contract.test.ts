@@ -161,7 +161,7 @@ describe('MCP server factory', () => {
     const registry = register.mock.calls[0]?.[0];
     expect(registry).toBeDefined();
     if (registry === undefined) throw new Error('Capability registry was not provided');
-    expect(Object.keys(registry)).toEqual(['registerTool']);
+    expect(Object.keys(registry)).toEqual(['registerTool', 'registerResource']);
     expect('tool' in registry).toBe(false);
   });
 });

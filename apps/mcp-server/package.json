@@ -23,6 +23,12 @@
   "files": [
     "dist"
   ],
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
   "bin": {
     "editor-mcp": "./dist/cli.js",
     "editor-mcp-http": "./dist/http/cli.js"
@@ -43,6 +49,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit --pretty false"
   },
   "dependencies": {
+    "@editor-mcp/core": "workspace:*",
+    "@editor-mcp/protocol": "workspace:*",
     "@modelcontextprotocol/sdk": "1.29.0",
     "cors": "2.8.6",
     "express": "5.2.1",
@@ -53,7 +61,13 @@
     "zod": "4.4.3"
   },
   "devDependencies": {
+    "@editor-mcp/adapter-tiptap-hocuspocus": "workspace:*",
+    "@editor-mcp/document-service": "workspace:*",
+    "@editor-mcp/runtime-hocuspocus": "workspace:*",
     "@types/cors": "2.8.19",
-    "@types/express": "5.0.6"
+    "@types/express": "5.0.6",
+    "@types/node": "22.20.1",
+    "typescript": "6.0.3",
+    "vitest": "4.1.10"
   }
 }

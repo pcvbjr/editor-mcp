@@ -10,8 +10,11 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 
 import packageManifest from '../../package.json' with { type: 'json' };
+import rootManifest from '../../../../package.json' with { type: 'json' };
 
 const mcpServerDirectory = fileURLToPath(new URL('../../', import.meta.url));
+const coreDirectory = fileURLToPath(new URL('../../../../packages/core/', import.meta.url));
+const protocolDirectory = fileURLToPath(new URL('../../../../packages/protocol/', import.meta.url));
 const pnpmCommand = process.platform === 'win32' ? 'pnpm.cmd' : 'pnpm';
 
 function runPnpm(arguments_: readonly string[], cwd: string): void {
@@ -41,19 +44,52 @@ const temporaryDirectory = await mkdtemp(join(tmpdir(), 'editor-mcp-package-'));
 const consumerDirectory = join(temporaryDirectory, 'consumer');
 
 try {
-  runPnpm(['pack', '--pack-destination', temporaryDirectory], mcpServerDirectory);
-  const tarballNames = (await readdir(temporaryDirectory)).filter((name) => name.endsWith('.tgz'));
-  assert.equal(tarballNames.length, 1, 'package smoke expected exactly one tarball');
-  const tarballName = tarballNames[0];
-  assert.ok(tarballName);
-  const tarballPath = join(temporaryDirectory, tarballName);
+  const pack = async (directory: string): Promise<string> => {
+    const before = new Set(await readdir(temporaryDirectory));
+    runPnpm(['pack', '--pack-destination', temporaryDirectory], directory);
+    const created = (await readdir(temporaryDirectory)).filter(
+      (name) => name.endsWith('.tgz') && !before.has(name),
+    );
+    assert.equal(created.length, 1, `package smoke expected one tarball from ${directory}`);
+    const name = created[0];
+    assert.ok(name);
+    return join(temporaryDirectory, name);
+  };
+  const protocolTarball = await pack(protocolDirectory);
+  const coreTarball = await pack(coreDirectory);
+  const mcpServerTarball = await pack(mcpServerDirectory);
 
   await mkdir(consumerDirectory);
   await writeFile(
     join(consumerDirectory, 'package.json'),
-    `${JSON.stringify({ name: 'editor-mcp-package-consumer', private: true }, null, 2)}\n`,
+    `${JSON.stringify(
+      {
+        name: 'editor-mcp-package-consumer',
+        private: true,
+        packageManager: rootManifest.packageManager,
+        dependencies: {
+          '@editor-mcp/protocol': `file:${protocolTarball}`,
+          '@editor-mcp/core': `file:${coreTarball}`,
+          '@editor-mcp/mcp-server': `file:${mcpServerTarball}`,
+        },
+      },
+      null,
+      2,
+    )}\n`,
   );
-  runPnpm(['add', '--prefer-offline', '--ignore-scripts', tarballPath], consumerDirectory);
+  await writeFile(
+    join(consumerDirectory, 'pnpm-workspace.yaml'),
+    `${JSON.stringify({
+      overrides: {
+        '@editor-mcp/protocol': `file:${protocolTarball}`,
+        '@editor-mcp/core': `file:${coreTarball}`,
+      },
+    })}\n`,
+  );
+  runPnpm(
+    ['install', '--prefer-offline', '--ignore-scripts', '--registry=https://registry.npmjs.org/'],
+    consumerDirectory,
+  );
 
   const installedPackageDirectory = join(
     consumerDirectory,

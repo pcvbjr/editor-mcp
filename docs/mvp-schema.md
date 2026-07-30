@@ -28,7 +28,14 @@ This profile defines the first document schema certified by Editor MCP. A docume
 | `tableHeader`    | yes         | `blockId`, `colspan`, `rowspan`, optional `colwidth`, tracking attributes |
 | `tableCell`      | yes         | `blockId`, `colspan`, `rowspan`, optional `colwidth`, tracking attributes |
 
-`blockId` is an opaque UUID assigned by the server. Model-supplied IDs on newly inserted content are ignored or rejected. IDs survive content edits, moves, compatible one-to-one type changes, and replacements that retain the same semantic block.
+`blockId` is an opaque UUID assigned by the server. Model-supplied IDs on newly inserted or
+replacement content are rejected. Localized text and formatting operations retain the containing
+block's ID, and moving an existing node retains that node's ID.
+
+`replace_block` is an identity boundary, not a localized content edit. It retires the target block
+ID and assigns fresh server-owned IDs to every addressable node in the replacement subtree. This
+rule applies even when the replacement has the same node type. A block type change is a replacement
+and therefore always produces a new block ID; there is no "compatible type change" exception.
 
 ## Marks
 
