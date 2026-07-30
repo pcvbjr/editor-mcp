@@ -46,8 +46,24 @@ only one source of command behavior.
 - Tiptap 3 core, ProseMirror bridge, server-side HTML conversion, stable IDs, and the
   initial document-schema extensions
 
-Bundling, browser end-to-end tests, release automation, and collaboration dependencies are
-deferred until the corresponding implementation phases.
+Browser end-to-end tests, release automation, and production deployment of the demo remain
+release-hardening work. The repository now includes the collaboration runtime and a bundled demo
+application.
+
+## Collaborative demo
+
+The demo composes the real document service, local Streamable HTTP MCP endpoint, Hocuspocus/Yjs
+collaboration server, and a React/Tiptap client. Its chat panel calls the same MCP create, read, and
+apply tools exposed to external agents. Agent changes are always suggestions; the human client can
+type directly and accept or reject pending changes through the authenticated HTTP mutation path.
+
+```sh
+make demo
+```
+
+Open `http://127.0.0.1:3030`. A local MCP client can connect to
+`http://127.0.0.1:3030/mcp`. The demo uses in-memory persistence and fixed local identities; it is a
+repeatable product demonstration, not a production deployment.
 
 ## MCP server
 
@@ -76,7 +92,7 @@ make mcp-inspect
 Inspector should complete initialization and report the MCP app name and version. The standalone
 binary remains a transport host until a product composition supplies document persistence and
 authorization; tests compose it with the real ProseMirror/Yjs service and execute a complete
-read/edit/read exchange.
+  create/read/edit/read exchange.
 
 The Streamable HTTP process is authenticated in every environment; there is no environment switch that
 disables OAuth. For local development, use a WorkOS staging environment and set a loopback resource such

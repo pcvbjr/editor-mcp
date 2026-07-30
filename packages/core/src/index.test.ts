@@ -11,6 +11,9 @@ import {
   sha256,
   toErrorEnvelope,
   type ApplyContext,
+  type CreateContext,
+  type DocumentCreationOutcome,
+  type DocumentCreationPort,
   type DocumentIdentity,
   type DocumentMutationPort,
   type DocumentReadPort,
@@ -50,8 +53,9 @@ const context: ApplyContext = {
   },
 };
 
-class FakeDocuments implements DocumentReadPort, DocumentMutationPort {
+class FakeDocuments implements DocumentReadPort, DocumentMutationPort, DocumentCreationPort {
   public mutationCount = 0;
+  public creationCount = 0;
   public lastIdentity: DocumentIdentity | undefined;
   public readonly outcome: MutationOutcome = {
     status: 'applied',
@@ -77,6 +81,20 @@ class FakeDocuments implements DocumentReadPort, DocumentMutationPort {
     this.mutationCount += 1;
     this.lastIdentity = identity;
     return this.outcome;
+  }
+
+  public async createBlank(identity: DocumentIdentity): Promise<DocumentCreationOutcome> {
+    this.creationCount += 1;
+    this.lastIdentity = identity;
+    return {
+      created: this.creationCount === 1,
+      revision: 'rev-created',
+      acknowledgement: {
+        level: 'snapshot',
+        sequence: 1,
+        storedAt: '2026-07-17T00:00:00.000Z',
+      },
+    };
   }
 }
 
@@ -110,6 +128,40 @@ describe('canonical request hashing', () => {
 });
 
 describe('EditorService', () => {
+  it('creates a server-addressed document and returns its editor URL', async () => {
+    const setup = service();
+    const createContext: CreateContext = {
+      authorization: {
+        ...context.authorization,
+        permissions: new Set(['documents:create']),
+      },
+    };
+    const input = {
+      protocolVersion: 1,
+      tenantId: 'tenant-1',
+      collaborationField: 'default',
+      schemaId: 'editor-mcp/mvp',
+      schemaVersion: 1,
+      idempotencyKey: 'create-document-1',
+    } as const;
+
+    const first = await setup.service.createDocument(input, createContext);
+    const replay = await setup.service.createDocument(input, createContext);
+
+    expect(first).toMatchObject({
+      status: 'created',
+      idempotentReplay: false,
+      revision: 'rev-created',
+    });
+    expect(first.editorUrl).toContain(first.documentId);
+    expect(replay).toMatchObject({
+      status: 'existing',
+      idempotentReplay: true,
+      documentId: first.documentId,
+      documentIncarnation: first.documentIncarnation,
+    });
+  });
+
   it('rejects direct mutations from agent principals before authorization or persistence', async () => {
     const setup = service();
     const agentContext: ApplyContext = {
@@ -122,6 +174,36 @@ describe('EditorService', () => {
     await expect(setup.service.applyEdits(request, agentContext)).rejects.toMatchObject({
       code: 'PERMISSION_DENIED',
       message: 'Agent principals may only submit suggested edits',
+    });
+    expect(setup.documents.mutationCount).toBe(0);
+  });
+
+  it('rejects review decisions from agents even under a permissive permission set', async () => {
+    const setup = service();
+    await expect(
+      setup.service.applyEdits(
+        {
+          ...request,
+          changeMode: 'suggest',
+          operations: [
+            {
+              operationId: 'review-1',
+              kind: 'accept_change',
+              changeId: 'change-1',
+            },
+          ],
+        },
+        {
+          authorization: {
+            ...context.authorization,
+            principalType: 'agent',
+            permissions: new Set(['documents:suggest', 'suggestions:review']),
+          },
+        },
+      ),
+    ).rejects.toMatchObject({
+      code: 'PERMISSION_DENIED',
+      message: 'Agent principals cannot accept or reject suggestions',
     });
     expect(setup.documents.mutationCount).toBe(0);
   });

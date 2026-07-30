@@ -7,16 +7,20 @@ import { StdioServerTransport } from '@modelcontextprotocol/sdk/server/stdio.js'
 import {
   DomainError,
   assertChangeModeAllowed,
+  assertReviewOperationsAllowed,
   toErrorEnvelope,
   type ApplyContext,
   type ApplyEditsResult,
   type AuthorizationContext,
+  type CreateDocumentResultV1,
   type DocumentReadResultV1,
   type ReadContext,
 } from '@editor-mcp/core';
 import {
   applyEditsRequestV1Schema,
   applyEditsResultSchema,
+  createDocumentRequestV1Schema,
+  createDocumentResultV1Schema,
   documentReadRequestSchema,
   documentReadResultV1Schema,
 } from '@editor-mcp/protocol';
@@ -25,8 +29,10 @@ import { createMcpServer, type CapabilityRegistrar, type CapabilityRegistry } fr
 
 export const READ_TOOL_NAME = 'editor.document.read.v1';
 export const APPLY_TOOL_NAME = 'editor.document.apply_edits.v1';
+export const CREATE_TOOL_NAME = 'editor.document.create.v1';
 
 export interface McpEditorService {
+  createDocument?(input: unknown, context: ApplyContext): Promise<CreateDocumentResultV1>;
   readDocumentV1(input: unknown, context: ReadContext): Promise<DocumentReadResultV1>;
   applyEdits(input: unknown, context: ApplyContext): Promise<ApplyEditsResult>;
 }
@@ -85,6 +91,38 @@ function registerEditorCapabilities(
   registry: CapabilityRegistry,
   options: EditorMcpServerOptions,
 ): void {
+  if (options.service.createDocument !== undefined) {
+    registry.registerTool(
+      CREATE_TOOL_NAME,
+      {
+        title: 'Create editor document',
+        description: 'Create a durable collaborative document and return its hosted editor URL.',
+        inputSchema: createDocumentRequestV1Schema,
+        outputSchema: createDocumentResultV1Schema,
+        annotations: {
+          readOnlyHint: false,
+          destructiveHint: false,
+          idempotentHint: true,
+          openWorldHint: false,
+        },
+      },
+      async (input, extra) => {
+        try {
+          const authorization = await options.authorization(extra.signal, extra.authInfo);
+          const result = createDocumentResultV1Schema.parse(
+            await options.service.createDocument?.(input, {
+              authorization,
+              signal: extra.signal,
+            }),
+          );
+          return jsonContent(result);
+        } catch (error) {
+          return mcpError(controlledError(error, extra.signal));
+        }
+      },
+    );
+  }
+
   registry.registerTool(
     READ_TOOL_NAME,
     {
@@ -135,6 +173,7 @@ function registerEditorCapabilities(
         const authorization = await options.authorization(extra.signal, extra.authInfo);
         const parsedInput = applyEditsRequestV1Schema.parse(input);
         assertChangeModeAllowed(parsedInput.changeMode, authorization);
+        assertReviewOperationsAllowed(parsedInput.operations, authorization);
         const result = applyEditsResultSchema.parse(
           await options.service.applyEdits(input, {
             authorization,

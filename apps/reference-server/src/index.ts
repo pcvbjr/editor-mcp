@@ -3,22 +3,27 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import {
   DomainError,
   assertChangeModeAllowed,
+  assertReviewOperationsAllowed,
   toErrorEnvelope,
   type ApplyContext,
   type ApplyEditsResult,
   type AuthorizationContext,
+  type CreateDocumentResultV1,
   type DocumentReadResultV1,
   type ReadContext,
 } from '@editor-mcp/core';
 import {
   applyEditsRequestV1Schema,
   applyEditsResultSchema,
+  createDocumentRequestV1Schema,
+  createDocumentResultV1Schema,
   documentReadRequestSchema,
   documentReadResultV1Schema,
   type DocumentReadRequest,
 } from '@editor-mcp/protocol';
 
 export interface ReferenceEditorService {
+  createDocument?(input: unknown, context: ApplyContext): Promise<CreateDocumentResultV1>;
   readDocumentV1(input: unknown, context: ReadContext): Promise<DocumentReadResultV1>;
   applyEdits(input: unknown, context: ApplyContext): Promise<ApplyEditsResult>;
 }
@@ -265,8 +270,9 @@ export function createReferenceServer(options: ReferenceServerOptions): Referenc
         sendJson(response, 200, { status: 'ok' });
         return;
       }
+      const createRoute = request.method === 'POST' && url.pathname === '/v1/documents';
       const path = parseDocumentPath(url.pathname);
-      if (path === undefined) {
+      if (!createRoute && path === undefined) {
         sendJson(response, 404, {
           version: 1,
           error: {
@@ -287,6 +293,43 @@ export function createReferenceServer(options: ReferenceServerOptions): Referenc
       );
       if (authorization === undefined) {
         throw new DomainError('UNAUTHENTICATED', 'A valid bearer credential is required', false);
+      }
+
+      if (createRoute) {
+        if (options.service.createDocument === undefined) {
+          throw new DomainError(
+            'DOCUMENT_UNAVAILABLE',
+            'This service does not support document creation',
+            false,
+          );
+        }
+        const body = await abortable(
+          readBody(request, maxBodyBytes, controller.signal),
+          controller.signal,
+        );
+        const parsedBody = createDocumentRequestV1Schema.safeParse(body);
+        if (!parsedBody.success) {
+          throw new DomainError(
+            'INVALID_REQUEST',
+            'The versioned document creation request is invalid',
+            false,
+            { issueCount: parsedBody.error.issues.length },
+            { cause: parsedBody.error },
+          );
+        }
+        const result = createDocumentResultV1Schema.parse(
+          await options.service.createDocument(parsedBody.data, {
+            authorization,
+            signal: controller.signal,
+            deadline,
+          }),
+        );
+        sendJson(response, result.status === 'created' ? 201 : 200, result);
+        return;
+      }
+
+      if (path === undefined) {
+        throw new DomainError('INTERNAL', 'The document route was not resolved', false);
       }
 
       if (request.method === 'GET' && path.operation === 'read') {
@@ -317,6 +360,7 @@ export function createReferenceServer(options: ReferenceServerOptions): Referenc
           );
         }
         assertChangeModeAllowed(parsedBody.data.changeMode, authorization);
+        assertReviewOperationsAllowed(parsedBody.data.operations, authorization);
         /*
          * A mutation owns its commit boundary. Racing it against the transport
          * signal could return 408 while a durable commit completes afterward.

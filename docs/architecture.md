@@ -407,7 +407,9 @@ The server-side review contract must define:
 
 The client application decides how pending changes are rendered and where review controls appear. Decorations, node views, colors, gutters, hover cards, and controls are outside the service contract. Clients derive presentation from synchronized change marks, node attributes, metadata, and semantic status supplied by the service.
 
-Accepting or rejecting a suggestion is a separate authorized mutation. Agents should not be allowed to accept their own suggestions by default.
+Accepting or rejecting a suggestion is a separate authorized mutation. Agent principals are never
+allowed to accept or reject suggestions, even when a custom permission policy is configured too
+broadly. Human or explicitly trusted service principals require `suggestions:review`.
 
 ## 11. MCP interface
 
@@ -421,6 +423,12 @@ Accepting or rejecting a suggestion is a separate authorized mutation. Agents sh
 MCP sessions are transport state, not document identity or authentication state. Every operation includes an explicit document ID.
 
 ### 11.2 Minimal tools
+
+#### `editor.document.create.v1`
+
+Creates one durable blank collaborative document using server-owned identity, then returns its
+initial revision and hosted editor URL. Content authored by an agent is submitted afterward through
+`apply_edits` so it remains reviewable.
 
 #### `editor.document.read.v1`
 

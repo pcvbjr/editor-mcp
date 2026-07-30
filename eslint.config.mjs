@@ -40,5 +40,11 @@ export default tseslint.config(
       '@typescript-eslint/require-await': 'off',
     },
   },
+  {
+    files: ['apps/demo/client/**/*.ts', 'apps/demo/client/**/*.tsx'],
+    languageOptions: {
+      globals: globals.browser,
+    },
+  },
   prettier,
 );

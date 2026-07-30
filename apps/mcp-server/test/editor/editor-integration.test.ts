@@ -12,14 +12,23 @@ import {
   type DocumentIdentity,
 } from '@editor-mcp/core';
 import { TiptapDocumentService } from '@editor-mcp/document-service';
-import { applyEditsResultSchema, documentReadResultV1Schema } from '@editor-mcp/protocol';
+import {
+  applyEditsResultSchema,
+  createDocumentResultV1Schema,
+  documentReadResultV1Schema,
+} from '@editor-mcp/protocol';
 import {
   HocuspocusRuntime,
   MemoryYjsPersistence,
   ProseMirrorYjsDocumentCodec,
 } from '@editor-mcp/runtime-hocuspocus';
 
-import { APPLY_TOOL_NAME, READ_TOOL_NAME, createEditorMcpServer } from '../../src/index.js';
+import {
+  APPLY_TOOL_NAME,
+  CREATE_TOOL_NAME,
+  READ_TOOL_NAME,
+  createEditorMcpServer,
+} from '../../src/index.js';
 
 const blockId = '00000000-0000-4000-8000-000000000001';
 const identity: DocumentIdentity = {
@@ -34,7 +43,7 @@ const authorization: AuthorizationContext = {
   tenantId: identity.tenantId,
   principalId: 'agent-1',
   principalType: 'agent',
-  permissions: new Set(['documents:read', 'documents:suggest']),
+  permissions: new Set(['documents:create', 'documents:read', 'documents:suggest']),
   agentRunId: 'run-1',
   traceId: 'trace-1',
 };
@@ -89,6 +98,27 @@ describe('editor MCP vertical slice', () => {
     try {
       await server.connect(serverTransport);
       await client.connect(clientTransport);
+      const created = createDocumentResultV1Schema.parse(
+        (
+          await client.callTool({
+            name: CREATE_TOOL_NAME,
+            arguments: {
+              protocolVersion: 1,
+              tenantId: identity.tenantId,
+              collaborationField: 'default',
+              schemaId: 'editor-mcp/mvp',
+              schemaVersion: 1,
+              idempotencyKey: 'mcp-create-integration',
+            },
+          })
+        ).structuredContent,
+      );
+      expect(created).toMatchObject({
+        status: 'created',
+        tenantId: identity.tenantId,
+      });
+      expect(created.editorUrl).toContain(created.documentId);
+
       const readRequest = {
         protocolVersion: 1 as const,
         ...identity,

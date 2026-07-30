@@ -6,11 +6,15 @@ import {
   MVP_SCHEMA_ID,
   MVP_SCHEMA_VERSION,
   applyEditsRequestSchema,
+  createDocumentRequestV1Schema,
+  createDocumentResultV1Schema,
   documentReadRequestSchema,
   type ApplyEditsRequest,
   type ApplyEditsResult as ProtocolApplyEditsResult,
   type AuditEvent as ProtocolAuditEvent,
   type AuditTargetPrecondition,
+  type CreateDocumentRequestV1,
+  type CreateDocumentResultV1,
   type DocumentReadRequest,
   type DocumentReadResult,
   type DocumentReadResultV1,
@@ -23,6 +27,8 @@ import { z } from 'zod';
 
 export type {
   ApplyEditsRequest,
+  CreateDocumentRequestV1,
+  CreateDocumentResultV1,
   DocumentReadRequest,
   DocumentReadResult,
   DocumentReadResultV1,
@@ -109,6 +115,7 @@ export interface DocumentIdentity {
 }
 
 export const permissions = [
+  'documents:create',
   'documents:read',
   'documents:suggest',
   'documents:write',
@@ -147,6 +154,24 @@ export function assertChangeModeAllowed(
   }
 }
 
+/** Agents propose changes; they never resolve review decisions, even if a
+ * custom permission policy is accidentally configured too broadly. */
+export function assertReviewOperationsAllowed(
+  operations: readonly Pick<EditOperation, 'kind'>[],
+  authorization: Pick<AuthorizationContext, 'principalType'>,
+): void {
+  if (
+    authorization.principalType === 'agent' &&
+    operations.some(({ kind }) => kind === 'accept_change' || kind === 'reject_change')
+  ) {
+    throw new DomainError(
+      'PERMISSION_DENIED',
+      'Agent principals cannot accept or reject suggestions',
+      false,
+    );
+  }
+}
+
 export interface RequestControl {
   readonly signal?: AbortSignal | undefined;
   readonly deadline?: Date | undefined;
@@ -170,8 +195,15 @@ export interface ApplyContext extends RequestControl {
   readonly authorization: AuthorizationContext;
 }
 
+export type CreateContext = ApplyContext;
+
 export interface AuthorizationInput {
-  readonly action: 'document.read' | 'document.suggest' | 'document.write' | 'suggestion.review';
+  readonly action:
+    | 'document.create'
+    | 'document.read'
+    | 'document.suggest'
+    | 'document.write'
+    | 'suggestion.review';
   readonly identity: DocumentIdentity;
   readonly authorization: AuthorizationContext;
 }
@@ -253,6 +285,16 @@ export interface DocumentMutationPort {
     request: ApplyEditsRequest,
     context: ApplyContext,
   ): Promise<MutationOutcome>;
+}
+
+export interface DocumentCreationOutcome {
+  readonly created: boolean;
+  readonly revision: string;
+  readonly acknowledgement: PersistenceAck;
+}
+
+export interface DocumentCreationPort {
+  createBlank(identity: DocumentIdentity, context: CreateContext): Promise<DocumentCreationOutcome>;
 }
 
 export interface IdempotencyScope {
@@ -437,13 +479,15 @@ export class MemoryAuditSink implements AuditSink {
 export class PermissionAuthorizationPolicy implements AuthorizationPolicy {
   public authorize(input: AuthorizationInput): Promise<AuthorizationDecision> {
     const required: Permission =
-      input.action === 'document.read'
-        ? 'documents:read'
-        : input.action === 'document.suggest'
-          ? 'documents:suggest'
-          : input.action === 'document.write'
-            ? 'documents:write'
-            : 'suggestions:review';
+      input.action === 'document.create'
+        ? 'documents:create'
+        : input.action === 'document.read'
+          ? 'documents:read'
+          : input.action === 'document.suggest'
+            ? 'documents:suggest'
+            : input.action === 'document.write'
+              ? 'documents:write'
+              : 'suggestions:review';
     return Promise.resolve({
       allowed:
         input.authorization.tenantId === input.identity.tenantId &&
@@ -461,12 +505,13 @@ export class AllowAllOperationPolicy implements OperationPolicy {
 }
 
 export interface EditorServiceOptions {
-  readonly documents: DocumentReadPort & DocumentMutationPort;
+  readonly documents: DocumentReadPort & DocumentMutationPort & Partial<DocumentCreationPort>;
   readonly authorization: AuthorizationPolicy;
   readonly operationPolicy?: OperationPolicy;
   readonly idempotency: IdempotencyLedger;
   readonly audit: AuditSink;
   readonly now?: () => Date;
+  readonly editorUrl?: (identity: DocumentIdentity) => string;
 }
 
 function checkControl(control: RequestControl): void {
@@ -548,6 +593,32 @@ function identityFor(
     documentId: request.documentId,
     documentIncarnation: request.documentIncarnation,
     collaborationField: request.collaborationField ?? 'default',
+    schemaId: request.schemaId,
+    schemaVersion: request.schemaVersion,
+  };
+}
+
+function creationIdentity(
+  request: CreateDocumentRequestV1,
+  authorization: AuthorizationContext,
+): DocumentIdentity {
+  const fingerprint = createHash('sha256')
+    .update(
+      canonicalJson({
+        tenantId: request.tenantId,
+        principalId: authorization.principalId,
+        collaborationField: request.collaborationField,
+        schemaId: request.schemaId,
+        schemaVersion: request.schemaVersion,
+        idempotencyKey: request.idempotencyKey,
+      }),
+    )
+    .digest('hex');
+  return {
+    tenantId: request.tenantId,
+    documentId: `doc_${fingerprint.slice(0, 24)}`,
+    documentIncarnation: `inc_${fingerprint.slice(24, 48)}`,
+    collaborationField: request.collaborationField,
     schemaId: request.schemaId,
     schemaVersion: request.schemaVersion,
   };
@@ -730,12 +801,13 @@ function operationResults(
 }
 
 export class EditorService {
-  readonly #documents: DocumentReadPort & DocumentMutationPort;
+  readonly #documents: DocumentReadPort & DocumentMutationPort & Partial<DocumentCreationPort>;
   readonly #authorization: AuthorizationPolicy;
   readonly #operationPolicy: OperationPolicy;
   readonly #idempotency: IdempotencyLedger;
   readonly #audit: AuditSink;
   readonly #now: () => Date;
+  readonly #editorUrl: (identity: DocumentIdentity) => string;
 
   public constructor(options: EditorServiceOptions) {
     this.#documents = options.documents;
@@ -744,6 +816,48 @@ export class EditorService {
     this.#idempotency = options.idempotency;
     this.#audit = options.audit;
     this.#now = options.now ?? (() => new Date());
+    this.#editorUrl =
+      options.editorUrl ??
+      ((identity) =>
+        `http://127.0.0.1:3030/documents/${encodeURIComponent(identity.documentId)}?incarnation=${encodeURIComponent(identity.documentIncarnation)}`);
+  }
+
+  public async createDocument(
+    input: unknown,
+    context: CreateContext,
+  ): Promise<CreateDocumentResultV1> {
+    checkControl(context);
+    const parsed = createDocumentRequestV1Schema.safeParse(input);
+    if (!parsed.success) {
+      throw new DomainError(
+        'INVALID_REQUEST',
+        'The document creation request is invalid',
+        false,
+        { issueCount: parsed.error.issues.length },
+        { cause: parsed.error },
+      );
+    }
+    if (this.#documents.createBlank === undefined) {
+      throw new DomainError(
+        'DOCUMENT_UNAVAILABLE',
+        'This document adapter does not support document creation',
+        false,
+      );
+    }
+    const request = parsed.data;
+    const identity = creationIdentity(request, context.authorization);
+    await this.#requireAuthorization('document.create', identity, context.authorization);
+    checkControl(context);
+    const outcome = await this.#documents.createBlank(identity, context);
+    return createDocumentResultV1Schema.parse({
+      protocolVersion: 1,
+      ...identity,
+      status: outcome.created ? 'created' : 'existing',
+      idempotentReplay: !outcome.created,
+      revision: outcome.revision,
+      editorUrl: this.#editorUrl(identity),
+      acknowledgement: outcome.acknowledgement,
+    });
   }
 
   public async readDocument(
@@ -866,6 +980,7 @@ export class EditorService {
     }
     const request = parsed.data;
     assertChangeModeAllowed(request.changeMode, context.authorization);
+    assertReviewOperationsAllowed(request.operations, context.authorization);
     const identity = identityFor(request, context.authorization);
     const authorizationDecisions: AuthorizationDecision[] = [];
     for (const action of actionsFor(request)) {

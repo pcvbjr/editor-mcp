@@ -260,6 +260,29 @@ function request(
 }
 
 describe('TiptapDocumentService reads and direct mutations', () => {
+  it('creates one durable blank document and replays the same identity', async () => {
+    const persistence = new MemoryYjsPersistence();
+    const runtime = new HocuspocusRuntime({ persistence });
+    const service = new TiptapDocumentService({
+      runtime,
+      blockIdFactory: () => ids.first,
+    });
+
+    const first = await service.createBlank(identity, context);
+    const replay = await service.createBlank(identity, context);
+    const document = await stateOf(runtime);
+
+    expect(first).toMatchObject({ created: true, acknowledgement: { level: 'snapshot' } });
+    expect(replay).toMatchObject({
+      created: false,
+      revision: first.revision,
+      acknowledgement: { sequence: first.acknowledgement.sequence },
+    });
+    expect(listBlockSummaries(document)).toEqual([
+      expect.objectContaining({ id: ids.first, nodeType: 'paragraph' }),
+    ]);
+  });
+
   it('rejects direct mutations from agent principals at the document boundary', async () => {
     const { runtime, service } = await setup();
     const before = await stateOf(runtime);

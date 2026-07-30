@@ -51,6 +51,14 @@ describe('document identity isolation', () => {
 });
 
 describe('authoritative Hocuspocus lifecycle', () => {
+  it('exposes the same authoritative instance through the collaboration server', () => {
+    const runtime = new HocuspocusRuntime({ persistence: new MemoryYjsPersistence() });
+    const server = runtime.createCollaborationServer({ quiet: true });
+
+    expect(server.hocuspocus).toBe(runtime.hocuspocus);
+    expect(runtime.hocuspocus.server).toBe(server);
+  });
+
   it('commits atomically and reloads the acknowledged state', async () => {
     const persistence = new MemoryYjsPersistence();
     const runtime = new HocuspocusRuntime({ persistence });

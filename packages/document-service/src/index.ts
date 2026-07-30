@@ -29,8 +29,12 @@ import {
 import {
   DomainError,
   assertChangeModeAllowed,
+  assertReviewOperationsAllowed,
   type ApplyContext,
   type ConflictRecovery,
+  type CreateContext,
+  type DocumentCreationOutcome,
+  type DocumentCreationPort,
   type DocumentIdentity,
   type DocumentMutationPort,
   type DocumentReadPort,
@@ -1210,7 +1214,9 @@ function trimLastRoot(document: ProseMirrorNode): ProseMirrorNode {
   return document.type.create(document.attrs, Fragment.fromArray(children));
 }
 
-export class TiptapDocumentService implements DocumentReadPort, DocumentMutationPort {
+export class TiptapDocumentService
+  implements DocumentReadPort, DocumentMutationPort, DocumentCreationPort
+{
   readonly #runtime: HocuspocusRuntime;
   readonly #blockIdFactory: BlockIdFactory;
   readonly #changeIdFactory: () => string;
@@ -1233,6 +1239,45 @@ export class TiptapDocumentService implements DocumentReadPort, DocumentMutation
       jsonObject(document.toJSON()),
       metadataObject(metadata.list()),
     );
+  }
+
+  public async createBlank(
+    identity: DocumentIdentity,
+    _context: CreateContext,
+  ): Promise<DocumentCreationOutcome> {
+    void _context;
+    const existing = await this.#runtime.read(runtimeIdentity(identity));
+    if (existing !== undefined) {
+      return {
+        created: false,
+        revision: existing.revision,
+        acknowledgement: existing.acknowledgement,
+      };
+    }
+    const document = mvpSchema.node('doc', undefined, [
+      mvpSchema.node('paragraph', {
+        blockId: this.#blockIdFactory(),
+        diffChangeId: null,
+        diffChangeKind: null,
+      }),
+    ]);
+    const acknowledgement = await this.#runtime.seed(
+      runtimeIdentity(identity),
+      jsonObject(document.toJSON()),
+    );
+    const created = await this.#runtime.read(runtimeIdentity(identity));
+    if (created === undefined) {
+      throw new DomainError(
+        'DOCUMENT_UNAVAILABLE',
+        'The created document could not be loaded',
+        true,
+      );
+    }
+    return {
+      created: true,
+      revision: created.revision,
+      acknowledgement,
+    };
   }
 
   public async readDocument(
@@ -1362,6 +1407,7 @@ export class TiptapDocumentService implements DocumentReadPort, DocumentMutation
     context: ApplyContext,
   ): Promise<MutationOutcome> {
     assertChangeModeAllowed(request.changeMode, context.authorization);
+    assertReviewOperationsAllowed(request.operations, context.authorization);
     const requestHash = digestCanonicalJson(request);
     const receiptKey = mutationReceiptKey(identity, request, context);
     const before = await this.#runtime.read(runtimeIdentity(identity));

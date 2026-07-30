@@ -2,6 +2,7 @@ export * from './apply.js';
 export * from './audit.js';
 export * from './auth.js';
 export * from './base.js';
+export * from './create.js';
 export * from './errors.js';
 export * from './fixtures.js';
 export * from './idempotency.js';

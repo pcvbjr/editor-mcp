@@ -8,6 +8,7 @@ import {
   type ApplyContext,
   type ApplyEditsResult,
   type AuthorizationContext,
+  type CreateDocumentResultV1,
   type DocumentReadResultV1,
   type ReadContext,
 } from '@editor-mcp/core';
@@ -80,6 +81,25 @@ const appliedResult: ApplyEditsResult = {
   },
 };
 
+const createdResult: CreateDocumentResultV1 = {
+  protocolVersion: 1,
+  tenantId: 'tenant-1',
+  documentId: 'doc-created',
+  documentIncarnation: 'inc-created',
+  collaborationField: 'default',
+  schemaId: 'editor-mcp/mvp',
+  schemaVersion: 1,
+  status: 'created',
+  idempotentReplay: false,
+  revision: 'rev-created',
+  editorUrl: 'http://127.0.0.1:3030/documents/doc-created',
+  acknowledgement: {
+    level: 'snapshot',
+    sequence: 1,
+    storedAt: '2026-07-17T00:00:00.000Z',
+  },
+};
+
 const editBody = {
   protocolVersion: 1,
   tenantId: 'tenant-1',
@@ -141,6 +161,37 @@ afterEach(async () => {
 });
 
 describe('reference REST server', () => {
+  it('creates a document and returns its hosted editor URL', async () => {
+    const createDocument = vi.fn(async () => createdResult);
+    const origin = await start({
+      createDocument,
+      readDocumentV1: async () => readResult,
+      applyEdits: async () => appliedResult,
+    });
+    const response = await fetch(`${origin}/v1/documents`, {
+      method: 'POST',
+      headers: {
+        authorization: 'Bearer test',
+        'content-type': 'application/json',
+      },
+      body: JSON.stringify({
+        protocolVersion: 1,
+        tenantId: 'tenant-1',
+        collaborationField: 'default',
+        schemaId: 'editor-mcp/mvp',
+        schemaVersion: 1,
+        idempotencyKey: 'create-document-1',
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    expect(await response.json()).toEqual(createdResult);
+    expect(createDocument).toHaveBeenCalledWith(
+      expect.objectContaining({ idempotencyKey: 'create-document-1' }),
+      expect.objectContaining({ authorization }),
+    );
+  });
+
   it('serves bounded document reads through the core', async () => {
     const readDocumentV1 = vi.fn(async (_input: unknown, _context: ReadContext) => readResult);
     const origin = await start({

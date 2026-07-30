@@ -10,11 +10,13 @@ This plan is organized around integration gates rather than a strictly serial li
 
 Complete:
 
-- TypeScript and pnpm workspace infrastructure from `origin/main`.
-- Strict lint, formatting, type-checking, build, Vitest, and coverage gates.
-- Versioned Zod contracts in `@editor-mcp/protocol`.
-- Normative MVP schema covering common blocks, lists, marks, tables, and tracking fields.
-- Initial contract tests for schema capabilities, document reads, table operations, model-supplied IDs, and duplicate operation IDs.
+- Gates 0–2: versioned contracts, certified Tiptap adapter, deterministic fixture catalog, semantic
+  mutation surface, review resolution, and authoritative Hocuspocus/Yjs persistence.
+- REST plus local and authenticated remote MCP transport infrastructure.
+- MCP create, read, and atomic edit tools with server-owned document identities and editor URLs.
+- A local product demo composing chat-driven MCP calls, a live collaborative Tiptap editor, and
+  human accept/reject controls.
+- Strict lint, formatting, type-checking, build, Vitest, package-install, and coverage gates.
 
 The current baseline passes `pnpm run check`.
 
@@ -291,6 +293,7 @@ corresponding domain work is ready.
 
 Implement the thin agent-facing adapter independently of domain semantics:
 
+- `editor.document.create.v1`.
 - `editor.document.read.v1`.
 - `editor.document.apply_edits.v1`.
 - Bounded resources for outlines and blocks.
@@ -331,4 +334,7 @@ Release criteria:
 
 ## Immediate next task
 
-Implement Gate 0 contracts and Gate 1 adapter/fixture-kernel work together for one `replace_block` fixture. Include minimal proposal, accept, and reject projections so Gate 2 can exercise a complete vertical slice. Do not expand the semantic operation set until that fixture passes schema, tracking, canonicalization, idempotency, collaboration, persistence, and visual-state assertions.
+Harden the demo boundary into a deployable product composition: replace demo identities and memory
+persistence with real tenant authentication and durable storage, add browser end-to-end coverage for
+create → suggest → human edit → accept/reject → reload, and verify an external Codex or Claude client
+against the hosted MCP endpoint and returned editor URL.

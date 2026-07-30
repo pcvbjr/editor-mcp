@@ -18,6 +18,8 @@
     "test:watch": "vitest",
     "mcp:inspect": "pnpm --filter @editor-mcp/mcp-server build && pnpm exec mcp-inspector node apps/mcp-server/dist/cli.js",
     "mcp:http": "pnpm --filter @editor-mcp/mcp-server build && pnpm --filter @editor-mcp/mcp-server start:http",
+    "demo": "pnpm --filter @editor-mcp/demo build && NODE_ENV=production pnpm --filter @editor-mcp/demo start",
+    "demo:dev": "pnpm --filter @editor-mcp/demo dev",
     "typecheck": "tsc -b --pretty false",
     "check": "pnpm format:check && pnpm lint && pnpm typecheck && pnpm test:coverage && pnpm --filter @editor-mcp/mcp-server test:package"
   },

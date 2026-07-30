@@ -1,0 +1,18 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "outDir": "dist/server",
+    "rootDir": "src",
+    "types": ["node"]
+  },
+  "references": [
+    { "path": "../../packages/adapter-tiptap-hocuspocus" },
+    { "path": "../../packages/core" },
+    { "path": "../../packages/document-service" },
+    { "path": "../../packages/protocol" },
+    { "path": "../../packages/runtime-hocuspocus" },
+    { "path": "../mcp-server" },
+    { "path": "../reference-server" }
+  ],
+  "include": ["src/**/*.ts"]
+}

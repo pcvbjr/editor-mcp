@@ -2,7 +2,7 @@ PNPM ?= pnpm
 
 .DEFAULT_GOAL := help
 
-.PHONY: help setup install build clean format format-check lint test test-watch coverage typecheck check mcp-inspect mcp-http
+.PHONY: help setup install build clean format format-check lint test test-watch coverage typecheck check mcp-inspect mcp-http demo demo-dev
 
 help:
 	@printf '%s\n' \
@@ -19,6 +19,8 @@ help:
 		'  coverage      Run tests with V8 coverage' \
 		'  mcp-inspect   Build and open the MCP server in Inspector' \
 		'  mcp-http      Build and run the local Streamable HTTP MCP server' \
+		'  demo          Build and run the collaborative editor demo' \
+		'  demo-dev      Run the demo server and web client in development' \
 		'  check         Run all pre-commit checks' \
 		'  clean         Remove TypeScript build outputs'
 
@@ -57,6 +59,12 @@ mcp-inspect:
 
 mcp-http:
 	$(PNPM) mcp:http
+
+demo:
+	$(PNPM) demo
+
+demo-dev:
+	$(PNPM) demo:dev
 
 typecheck:
 	$(PNPM) typecheck

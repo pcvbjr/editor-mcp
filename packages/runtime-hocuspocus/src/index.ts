@@ -1,6 +1,12 @@
 import { createHash } from 'node:crypto';
 
-import { Hocuspocus, type DirectConnection, type Document } from '@hocuspocus/server';
+import {
+  Hocuspocus,
+  Server as HocuspocusWebSocketServer,
+  type DirectConnection,
+  type Document,
+  type ServerConfiguration,
+} from '@hocuspocus/server';
 import { ProsemirrorTransformer } from '@hocuspocus/transformer';
 import type { Schema } from '@tiptap/pm/model';
 import { Doc, XmlElement, XmlText, applyUpdate, encodeStateAsUpdate } from 'yjs';
@@ -431,11 +437,15 @@ export interface HocuspocusRuntimeOptions {
   readonly documentCodec?: YjsDocumentCodec;
 }
 
+export type CollaborationServerOptions = Partial<
+  Pick<ServerConfiguration<TransactionContext>, 'address' | 'port' | 'quiet' | 'websocketOptions'>
+>;
+
 export class HocuspocusRuntime {
   readonly #persistence: YjsPersistence;
   readonly #documentCodec: YjsDocumentCodec;
   readonly #mutex = new KeyedMutex();
-  readonly #hocuspocus: Hocuspocus<TransactionContext>;
+  #hocuspocus: Hocuspocus<TransactionContext>;
 
   public constructor(options: HocuspocusRuntimeOptions) {
     this.#persistence = options.persistence;
@@ -472,6 +482,22 @@ export class HocuspocusRuntime {
 
   public get hocuspocus(): Hocuspocus<TransactionContext> {
     return this.#hocuspocus;
+  }
+
+  /**
+   * Binds the authoritative runtime instance to Hocuspocus' WebSocket host so
+   * browser editors and direct semantic mutations share one live Y.Doc.
+   */
+  public createCollaborationServer(
+    options: CollaborationServerOptions = {},
+  ): HocuspocusWebSocketServer<TransactionContext> {
+    const server = new HocuspocusWebSocketServer<TransactionContext>({
+      ...options,
+      stopOnSignals: false,
+    });
+    server.hocuspocus.configure(this.#hocuspocus.configuration);
+    this.#hocuspocus = server.hocuspocus;
+    return server;
   }
 
   public async seed(

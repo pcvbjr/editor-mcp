@@ -21,6 +21,7 @@
     { "path": "./packages/document-service" },
     { "path": "./apps/mcp-server" },
     { "path": "./apps/reference-server" },
-    { "path": "./apps/visual-test-harness" }
+    { "path": "./apps/visual-test-harness" },
+    { "path": "./apps/demo" }
   ]
 }
