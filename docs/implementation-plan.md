@@ -14,8 +14,8 @@ Complete:
   mutation surface, review resolution, and authoritative Hocuspocus/Yjs persistence.
 - REST plus local and authenticated remote MCP transport infrastructure.
 - MCP create, read, and atomic edit tools with server-owned document identities and editor URLs.
-- A local product demo composing chat-driven MCP calls, a live collaborative Tiptap editor, and
-  human accept/reject controls.
+- A bring-your-own-agent product demo with named multi-edit suggestion groups, previews, document
+  navigation, group and individual review controls, and a live collaborative Tiptap editor.
 - Strict lint, formatting, type-checking, build, Vitest, package-install, and coverage gates.
 
 The current baseline passes `pnpm run check`.

@@ -255,6 +255,7 @@ function request(
     schemaVersion: 1,
     idempotencyKey,
     changeMode,
+    ...(changeMode === 'suggest' ? { suggestionGroupName: 'Test suggestion group' } : {}),
     operations,
   };
 }

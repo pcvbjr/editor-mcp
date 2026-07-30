@@ -19,6 +19,13 @@ interface OperationContainer {
   operations: readonly { operationId: string }[];
 }
 
+export const suggestionGroupNameSchema = z
+  .string()
+  .trim()
+  .min(1)
+  .max(80)
+  .describe('Short agent-authored title for this batch of suggested edits');
+
 const reportDuplicateOperationIds = (
   request: OperationContainer,
   context: z.RefinementCtx,
@@ -57,6 +64,7 @@ export const applyEditsRequestSchema = z
     readRevision: revisionSchema.optional(),
     atomic: z.literal(true).optional(),
     changeMode: changeModeSchema.default('suggest'),
+    suggestionGroupName: suggestionGroupNameSchema.optional(),
     operations: z.array(editOperationSchema).min(1).max(100),
   })
   .strict()
@@ -70,10 +78,27 @@ export const applyEditsRequestV1Schema = z
     readRevision: revisionSchema,
     atomic: z.literal(true),
     changeMode: changeModeSchema,
+    suggestionGroupName: suggestionGroupNameSchema.optional(),
     operations: z.array(editOperationSchema).min(1).max(100).readonly(),
   })
   .strict()
-  .superRefine(reportDuplicateOperationIds);
+  .superRefine((request, context) => {
+    reportDuplicateOperationIds(request, context);
+    if (request.changeMode === 'suggest' && request.suggestionGroupName === undefined) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Suggested edits require an agent-authored group name',
+        path: ['suggestionGroupName'],
+      });
+    }
+    if (request.changeMode === 'direct' && request.suggestionGroupName !== undefined) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Direct edits cannot include a suggestion group name',
+        path: ['suggestionGroupName'],
+      });
+    }
+  });
 
 export type ApplyEditsRequest = z.infer<typeof applyEditsRequestSchema>;
 export type ApplyEditsRequestV1 = z.infer<typeof applyEditsRequestV1Schema>;

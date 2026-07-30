@@ -10,6 +10,7 @@ import {
   revisionSchema,
   timestampSchema,
 } from './base.js';
+import { suggestionGroupNameSchema } from './apply.js';
 import { actorReferenceSchema } from './auth.js';
 
 export const changeKindSchema = z.enum(['insert', 'delete', 'replace', 'format', 'table']);
@@ -46,12 +47,21 @@ export const changeMetadataSchema = z
     proposedAt: timestampSchema.optional(),
     pendingAt: timestampSchema.optional(),
     groupId: changeGroupIdSchema.optional(),
+    suggestionGroupId: changeSetIdSchema.optional(),
+    suggestionGroupName: suggestionGroupNameSchema.optional(),
     memberChangeIds: z.array(changeIdSchema).min(1).readonly().optional(),
     affectedBlockIds: z.array(blockIdSchema).min(1).readonly(),
     resolution: changeResolutionSchema.optional(),
   })
   .strict()
   .superRefine((change, context) => {
+    if ((change.suggestionGroupId === undefined) !== (change.suggestionGroupName === undefined)) {
+      context.addIssue({
+        code: 'custom',
+        message: 'Suggestion group ID and name must either both be set or both be omitted',
+        path: ['suggestionGroupId'],
+      });
+    }
     if (
       change.status === 'grouped' &&
       change.groupId === undefined &&

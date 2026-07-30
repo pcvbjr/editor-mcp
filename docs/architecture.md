@@ -309,6 +309,7 @@ The revision is opaque. Block digests should be computed from canonical ProseMir
   "readRevision": "opaque-revision",
   "atomic": true,
   "changeMode": "suggest",
+  "suggestionGroupName": "Refresh project objectives",
   "operations": [
     {
       "operationId": "op_1",
@@ -322,6 +323,8 @@ The revision is opaque. Block digests should be computed from canonical ProseMir
 ```
 
 All operations in a request are validated against one live document state and committed atomically.
+Suggested requests require a short agent-authored group name. The committed change-set ID is the
+stable suggestion-group identity; every operation remains an independently addressable review unit.
 
 ### 8.4 Edit result
 
@@ -399,13 +402,14 @@ The server-side review contract must define:
 
 - Addition, deletion, replacement, and mark-change representation.
 - Suggestion IDs and authenticated authorship.
-- Grouping and nesting behavior.
+- A short agent-authored name and stable identity for each suggestion group.
+- Independent edit resolution inside a group plus atomic accept/reject of every pending group edit.
 - Table and atom-node behavior.
 - Accept and reject operations.
 - Effective document content while suggestions are pending.
 - Interaction with collaboration and undo history.
 
-The client application decides how pending changes are rendered and where review controls appear. Decorations, node views, colors, gutters, hover cards, and controls are outside the service contract. Clients derive presentation from synchronized change marks, node attributes, metadata, and semantic status supplied by the service.
+The client application decides how pending changes are rendered and where review controls appear. Decorations, node views, colors, gutters, hover cards, previews, navigation, and controls are outside the service contract. Clients derive presentation from synchronized change marks, node attributes, metadata, and semantic status supplied by the service.
 
 Accepting or rejecting a suggestion is a separate authorized mutation. Agent principals are never
 allowed to accept or reject suggestions, even when a custom permission policy is configured too

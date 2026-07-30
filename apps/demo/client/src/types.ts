@@ -16,6 +16,9 @@ export interface DocumentSession {
 export interface ChangeMetadata {
   readonly id: string;
   readonly groupId?: string;
+  readonly suggestionGroupId?: string;
+  readonly suggestionGroupName?: string;
+  readonly operationId?: string;
   readonly status: 'accepted' | 'pending' | 'rejected';
   readonly operation: 'delete' | 'format' | 'insert' | 'replace' | 'structure';
   readonly authorId: string;
@@ -25,10 +28,4 @@ export interface ChangeMetadata {
   readonly resolvedBy?: string;
   readonly summary?: string;
   readonly baseBlockId?: string;
-}
-
-export interface ChatMessage {
-  readonly id: string;
-  readonly role: 'agent' | 'user';
-  readonly text: string;
 }

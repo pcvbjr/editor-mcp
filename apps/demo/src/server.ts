@@ -1,11 +1,8 @@
-import { randomUUID } from 'node:crypto';
 import { existsSync } from 'node:fs';
 import { createServer } from 'node:http';
 import { fileURLToPath } from 'node:url';
 
 import express, { type Request, type Response } from 'express';
-import { Client } from '@modelcontextprotocol/sdk/client/index.js';
-import { InMemoryTransport } from '@modelcontextprotocol/sdk/inMemory.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
 import type { Transport } from '@modelcontextprotocol/sdk/shared/transport.js';
 
@@ -17,21 +14,10 @@ import {
   PermissionAuthorizationPolicy,
   toErrorEnvelope,
   type AuthorizationContext,
-  type DocumentIdentity,
 } from '@editor-mcp/core';
 import { TiptapDocumentService } from '@editor-mcp/document-service';
-import {
-  APPLY_TOOL_NAME,
-  CREATE_TOOL_NAME,
-  READ_TOOL_NAME,
-  createEditorMcpServer,
-} from '@editor-mcp/mcp-server';
-import {
-  applyEditsResultSchema,
-  createDocumentResultV1Schema,
-  documentIdentitySchema,
-  documentReadResultV1Schema,
-} from '@editor-mcp/protocol';
+import { createEditorMcpServer } from '@editor-mcp/mcp-server';
+import { documentIdentitySchema } from '@editor-mcp/protocol';
 import { createReferenceServer } from '@editor-mcp/reference-server';
 import {
   HocuspocusRuntime,
@@ -61,48 +47,6 @@ function parsePort(value: string | undefined, fallback: number, name: string): n
     throw new TypeError(`${name} must be an integer between 1 and 65535`);
   }
   return parsed;
-}
-
-function escapeHtml(value: string): string {
-  return value
-    .replaceAll('&', '&amp;')
-    .replaceAll('<', '&lt;')
-    .replaceAll('>', '&gt;')
-    .replaceAll('"', '&quot;')
-    .replaceAll("'", '&#39;');
-}
-
-function agentDraft(message: string, initial: boolean): string {
-  const prompt = escapeHtml(message.trim());
-  if (!initial) {
-    return `<h2>Agent revision</h2><p>${prompt}</p>`;
-  }
-  return [
-    '<h1>Collaborative working brief</h1>',
-    `<p>This document was created from the request: <strong>${prompt}</strong></p>`,
-    '<h2>Purpose</h2>',
-    '<p>Create a shared working surface where a person and an agent can develop the document together while the person remains in control.</p>',
-    '<h2>Working principles</h2>',
-    '<ul><li><p>Agent contributions arrive as reviewable suggestions.</p></li><li><p>Human edits are collaborative and immediately visible.</p></li><li><p>Accepted state is durable and safe to reload.</p></li></ul>',
-    '<h2>Open questions</h2>',
-    '<p>What should we sharpen, remove, or expand next?</p>',
-  ].join('');
-}
-
-function structuredToolContent(result: unknown): unknown {
-  if (
-    typeof result !== 'object' ||
-    result === null ||
-    !('structuredContent' in result) ||
-    result.structuredContent === undefined
-  ) {
-    const content =
-      typeof result === 'object' && result !== null && 'content' in result
-        ? result.content
-        : result;
-    throw new Error(`MCP tool failed: ${JSON.stringify(content)}`);
-  }
-  return result.structuredContent;
 }
 
 const persistence = new MemoryYjsPersistence();
@@ -147,30 +91,6 @@ const reference = createReferenceServer({
     Promise.resolve(authorizationHeader === 'Bearer demo-human' ? humanAuthorization : undefined),
 });
 
-async function createDemoMcpClient(): Promise<{
-  client: Client;
-  close(): Promise<void>;
-}> {
-  const server = createEditorMcpServer({
-    service: editor,
-    authorization: () => Promise.resolve(agentAuthorization),
-    name: 'editor-mcp-demo',
-    version: '0.0.0',
-  });
-  const client = new Client({ name: 'editor-mcp-demo-chat', version: '0.0.0' });
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  return {
-    client,
-    close: async () => {
-      await client.close();
-      await server.close();
-    },
-  };
-}
-
-const demoMcp = await createDemoMcpClient();
 const app = express();
 app.disable('x-powered-by');
 
@@ -240,120 +160,6 @@ app.get('/api/documents/:documentId/session', async (request: Request, response:
   }
 });
 
-app.post('/api/chat', async (request: Request, response: Response) => {
-  const message =
-    typeof request.body === 'object' &&
-    request.body !== null &&
-    typeof (request.body as Record<string, unknown>)['message'] === 'string'
-      ? String((request.body as Record<string, unknown>)['message']).trim()
-      : '';
-  if (message.length === 0 || message.length > 10_000) {
-    response.status(400).json({ error: 'A message between 1 and 10000 characters is required' });
-    return;
-  }
-
-  try {
-    const candidate =
-      typeof request.body === 'object' && request.body !== null
-        ? (request.body as Record<string, unknown>)['document']
-        : undefined;
-    let identity: DocumentIdentity;
-    let editorUrl: string;
-    let initial = false;
-    const parsedIdentity = documentIdentitySchema.safeParse(candidate);
-    if (parsedIdentity.success) {
-      identity = parsedIdentity.data;
-      editorUrl = `${publicOrigin}/documents/${encodeURIComponent(identity.documentId)}?incarnation=${encodeURIComponent(identity.documentIncarnation)}`;
-    } else {
-      initial = true;
-      const created = createDocumentResultV1Schema.parse(
-        structuredToolContent(
-          await demoMcp.client.callTool({
-            name: CREATE_TOOL_NAME,
-            arguments: {
-              protocolVersion: 1,
-              tenantId: 'demo',
-              collaborationField: 'default',
-              schemaId: 'editor-mcp/mvp',
-              schemaVersion: 1,
-              idempotencyKey: `demo-create-${randomUUID()}`,
-            },
-          }),
-        ),
-      );
-      identity = documentIdentitySchema.parse({
-        tenantId: created.tenantId,
-        documentId: created.documentId,
-        documentIncarnation: created.documentIncarnation,
-        collaborationField: created.collaborationField,
-        schemaId: created.schemaId,
-        schemaVersion: created.schemaVersion,
-      });
-      editorUrl = created.editorUrl;
-    }
-
-    const read = documentReadResultV1Schema.parse(
-      structuredToolContent(
-        await demoMcp.client.callTool({
-          name: READ_TOOL_NAME,
-          arguments: {
-            protocolVersion: 1,
-            ...identity,
-            selection: { kind: 'document' },
-            representationProfile: 'agent-html/v1',
-          },
-        }),
-      ),
-    );
-    const anchor = read.blocks.at(-1);
-    if (anchor === undefined) {
-      throw new Error('The document has no addressable block');
-    }
-    const applied = applyEditsResultSchema.parse(
-      structuredToolContent(
-        await demoMcp.client.callTool({
-          name: APPLY_TOOL_NAME,
-          arguments: {
-            protocolVersion: 1,
-            ...identity,
-            idempotencyKey: `demo-edit-${randomUUID()}`,
-            readRevision: read.revision,
-            atomic: true,
-            changeMode: 'suggest',
-            operations: [
-              {
-                operationId: `op-${randomUUID()}`,
-                kind: 'insert_after',
-                anchorBlockId: anchor.id,
-                expectedAnchorDigest: anchor.contentDigest,
-                html: agentDraft(message, initial),
-              },
-            ],
-          },
-        }),
-      ),
-    );
-    const session = {
-      identity,
-      documentName: documentNameFor(identity),
-      collaborationUrl,
-    };
-    response.json({
-      message: initial
-        ? 'I created a collaborative document and added the first draft as a suggestion.'
-        : 'I reread the live document and added a new tracked suggestion.',
-      editorUrl,
-      session,
-      result: applied,
-    });
-  } catch (error) {
-    process.stderr.write(
-      `${error instanceof Error ? (error.stack ?? error.message) : 'Unknown chat error'}\n`,
-    );
-    response.status(400).json(toErrorEnvelope(error));
-  }
-});
-
 const clientDirectory = fileURLToPath(new URL('../client', import.meta.url));
 if (existsSync(clientDirectory)) {
   app.use(express.static(clientDirectory));
@@ -389,15 +195,20 @@ const shutdown = async (): Promise<void> => {
         if (error === undefined) resolve();
         else reject(error);
       });
+      apiServer.closeAllConnections();
     }),
     collaborationServer.destroy(),
-    demoMcp.close(),
   ]);
 };
 
-process.once('SIGINT', () => {
-  void shutdown().finally(() => process.exit(0));
-});
-process.once('SIGTERM', () => {
-  void shutdown().finally(() => process.exit(0));
-});
+const requestShutdown = (): void => {
+  // A browser may retain a collaboration socket while the local demo is being stopped.
+  const forceExit = setTimeout(() => process.exit(0), 1500);
+  void shutdown().finally(() => {
+    clearTimeout(forceExit);
+    process.exit(0);
+  });
+};
+
+process.once('SIGINT', requestShutdown);
+process.once('SIGTERM', requestShutdown);

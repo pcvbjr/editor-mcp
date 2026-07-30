@@ -112,6 +112,7 @@ const editBody = {
   readRevision: 'rev-1',
   atomic: true,
   changeMode: 'suggest',
+  suggestionGroupName: 'Remove obsolete section',
   operations: [
     {
       operationId: 'op-1',
@@ -247,7 +248,11 @@ describe('reference REST server', () => {
         authorization: 'Bearer test',
         'content-type': 'application/json',
       },
-      body: JSON.stringify({ ...editBody, changeMode: 'direct' }),
+      body: JSON.stringify({
+        ...editBody,
+        changeMode: 'direct',
+        suggestionGroupName: undefined,
+      }),
     });
     expect(response.status).toBe(403);
     expect(await response.json()).toMatchObject({

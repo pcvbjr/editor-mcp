@@ -27,6 +27,15 @@ function assertTimestamp(value: string, field: string): void {
   }
 }
 
+function assertSuggestionGroupName(value: string): void {
+  if (value.trim().length === 0 || value.length > 80) {
+    throw new AdapterValidationError(
+      'METADATA_CONFLICT',
+      'Suggestion group name must contain between 1 and 80 characters',
+    );
+  }
+}
+
 function assertMarkSnapshot(marks: readonly ProseMirrorMarkJson[]): void {
   for (const mark of marks) {
     if (typeof mark.type !== 'string' || mark.type.length === 0 || mark.type === 'diffChange') {
@@ -42,6 +51,19 @@ export function validateChangeMetadata(record: ChangeMetadata): void {
   assertNonempty(record.id, 'Change ID');
   if (record.groupId !== undefined) {
     assertNonempty(record.groupId, 'Group ID');
+  }
+  if ((record.suggestionGroupId === undefined) !== (record.suggestionGroupName === undefined)) {
+    throw new AdapterValidationError(
+      'METADATA_CONFLICT',
+      'Suggestion group ID and name must either both be set or both be omitted',
+    );
+  }
+  if (record.suggestionGroupId !== undefined && record.suggestionGroupName !== undefined) {
+    assertNonempty(record.suggestionGroupId, 'Suggestion group ID');
+    assertSuggestionGroupName(record.suggestionGroupName);
+  }
+  if (record.operationId !== undefined) {
+    assertNonempty(record.operationId, 'Operation ID');
   }
   if (!statuses.has(record.status)) {
     throw new AdapterValidationError('METADATA_CONFLICT', 'Change status is invalid');
@@ -101,6 +123,13 @@ function immutableIdentity(record: ChangeMetadata): string {
   const identity = {
     id: record.id,
     ...(record.groupId === undefined ? {} : { groupId: record.groupId }),
+    ...(record.suggestionGroupId === undefined
+      ? {}
+      : { suggestionGroupId: record.suggestionGroupId }),
+    ...(record.suggestionGroupName === undefined
+      ? {}
+      : { suggestionGroupName: record.suggestionGroupName }),
+    ...(record.operationId === undefined ? {} : { operationId: record.operationId }),
     operation: record.operation,
     authorId: record.authorId,
     authorType: record.authorType,

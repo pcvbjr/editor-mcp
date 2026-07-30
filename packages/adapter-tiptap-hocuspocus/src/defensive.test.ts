@@ -215,6 +215,13 @@ describe('defensive metadata behavior', () => {
   it.each([
     ['empty ID', { ...pendingMetadata, id: '' }],
     ['empty group ID', { ...pendingMetadata, groupId: '' }],
+    ['group name without ID', { ...pendingMetadata, suggestionGroupName: 'Named group' }],
+    ['group ID without name', { ...pendingMetadata, suggestionGroupId: 'set-1' }],
+    [
+      'empty suggestion group name',
+      { ...pendingMetadata, suggestionGroupId: 'set-1', suggestionGroupName: ' ' },
+    ],
+    ['empty operation ID', { ...pendingMetadata, operationId: '' }],
     ['invalid status', { ...pendingMetadata, status: 'open' }],
     ['invalid operation', { ...pendingMetadata, operation: 'move' }],
     ['empty author ID', { ...pendingMetadata, authorId: '' }],

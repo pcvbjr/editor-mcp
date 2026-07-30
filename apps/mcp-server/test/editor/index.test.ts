@@ -202,6 +202,7 @@ describe('local MCP adapter', () => {
         readRevision: 'rev-1',
         atomic: true,
         changeMode: 'suggest',
+        suggestionGroupName: 'Remove obsolete block',
         operations: [
           {
             operationId: 'op-1',
@@ -367,6 +368,7 @@ describe('local MCP adapter', () => {
         readRevision: 'rev-1',
         atomic: true,
         changeMode: 'suggest',
+        suggestionGroupName: 'Remove obsolete block',
         operations: [
           {
             operationId: 'op-1',

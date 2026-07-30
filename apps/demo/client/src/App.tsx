@@ -1,14 +1,35 @@
-import { useEffect, useMemo, useRef, useState, type SyntheticEvent } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 
 import { editorExtensions } from './extensions';
-import type { ChangeMetadata, ChatMessage, DocumentIdentity, DocumentSession } from './types';
+import type { ChangeMetadata, DocumentIdentity, DocumentSession } from './types';
 
 const humanHeaders = {
   authorization: 'Bearer demo-human',
   'content-type': 'application/json',
 };
+
+interface ReviewEdit {
+  readonly id: string;
+  readonly changeId: string;
+  readonly changeIds: readonly string[];
+  readonly operation: ChangeMetadata['operation'];
+}
+
+interface ReviewGroup {
+  readonly id: string;
+  readonly name: string;
+  readonly authorId: string;
+  readonly createdAt: string;
+  readonly edits: readonly ReviewEdit[];
+}
+
+interface EditPreview {
+  readonly before?: string;
+  readonly after?: string;
+  readonly label: string;
+}
 
 function identityFromLocation(): DocumentIdentity | undefined {
   const match = /^\/documents\/([^/]+)$/u.exec(window.location.pathname);
@@ -68,67 +89,233 @@ function Toolbar({ editor }: { editor: ReturnType<typeof useEditor> }) {
   );
 }
 
+function pendingReviewGroups(changes: readonly ChangeMetadata[]): readonly ReviewGroup[] {
+  const groups = new Map<
+    string,
+    {
+      name: string;
+      authorId: string;
+      createdAt: string;
+      edits: Map<string, ChangeMetadata[]>;
+    }
+  >();
+
+  for (const change of changes.filter(({ status }) => status === 'pending')) {
+    const groupId = change.suggestionGroupId ?? change.id;
+    const group = groups.get(groupId) ?? {
+      name: change.suggestionGroupName ?? 'Suggested edits',
+      authorId: change.authorId,
+      createdAt: change.createdAt,
+      edits: new Map<string, ChangeMetadata[]>(),
+    };
+    const editId = change.groupId ?? change.id;
+    group.edits.set(editId, [...(group.edits.get(editId) ?? []), change]);
+    groups.set(groupId, group);
+  }
+
+  return [...groups.entries()]
+    .map(([id, group]): ReviewGroup => ({
+      id,
+      name: group.name,
+      authorId: group.authorId,
+      createdAt: group.createdAt,
+      edits: [...group.edits.entries()].map(([editId, records]) => {
+        const first = records[0];
+        if (first === undefined) throw new Error('A review edit must contain a change');
+        return {
+          id: editId,
+          changeId: first.id,
+          changeIds: records.map(({ id: changeId }) => changeId),
+          operation: first.operation,
+        };
+      }),
+    }))
+    .sort((left, right) => left.createdAt.localeCompare(right.createdAt));
+}
+
+function clippedText(element: HTMLElement): string | undefined {
+  const value = element.innerText.replaceAll(/\s+/gu, ' ').trim();
+  if (value.length === 0) return undefined;
+  return value;
+}
+
+function combinedPreview(elements: readonly HTMLElement[]): string | undefined {
+  const values = elements.map(clippedText).filter((value) => value !== undefined);
+  const combined = [...new Set(values)].join(' · ');
+  if (combined.length === 0) return undefined;
+  return combined.length > 150 ? `${combined.slice(0, 147)}…` : combined;
+}
+
+function editPreview(
+  changeIds: readonly string[],
+  operation: ReviewEdit['operation'],
+): EditPreview {
+  const selected = new Set(changeIds);
+  const elements = [...document.querySelectorAll<HTMLElement>('[data-diff-change-id]')].filter(
+    (element) => selected.has(element.dataset['diffChangeId'] ?? ''),
+  );
+  const before = combinedPreview(
+    elements.filter((element) => element.dataset['diffChangeKind'] === 'delete'),
+  );
+  const after = combinedPreview(
+    elements.filter((element) => element.dataset['diffChangeKind'] !== 'delete'),
+  );
+  const labels: Record<ReviewEdit['operation'], string> = {
+    delete: 'Remove content',
+    format: 'Change formatting',
+    insert: 'Add content',
+    replace: 'Replace content',
+    structure: 'Change table structure',
+  };
+  return {
+    label: labels[operation],
+    ...(before === undefined ? {} : { before }),
+    ...(after === undefined ? {} : { after }),
+  };
+}
+
+function navigateToEdit(changeIds: readonly string[]): void {
+  const selected = new Set(changeIds);
+  const target = [...document.querySelectorAll<HTMLElement>('[data-diff-change-id]')].find(
+    (element) => selected.has(element.dataset['diffChangeId'] ?? ''),
+  );
+  if (target === undefined) return;
+  target.scrollIntoView({ behavior: 'smooth', block: 'center' });
+  target.animate(
+    [
+      { boxShadow: '0 0 0 5px rgba(234, 185, 106, 0.72)' },
+      { boxShadow: '0 0 0 5px rgba(234, 185, 106, 0)' },
+    ],
+    { duration: 1600, easing: 'ease-out' },
+  );
+}
+
 function ReviewQueue({
   changes,
-  busyChange,
+  documentVersion,
+  busyTarget,
   onResolve,
 }: {
   readonly changes: readonly ChangeMetadata[];
-  readonly busyChange: string | undefined;
-  readonly onResolve: (changeId: string, decision: 'accept' | 'reject') => Promise<void>;
+  readonly documentVersion: number;
+  readonly busyTarget: string | undefined;
+  readonly onResolve: (
+    changeIds: readonly string[],
+    decision: 'accept' | 'reject',
+    target: string,
+  ) => Promise<void>;
 }) {
-  const pending = changes.filter(({ status }) => status === 'pending');
+  const groups = useMemo(() => pendingReviewGroups(changes), [changes]);
+  const editCount = groups.reduce((count, group) => count + group.edits.length, 0);
+  // Reading the version makes live editor transactions invalidate DOM-derived previews.
+  void documentVersion;
+
   return (
-    <aside className="review-panel">
+    <aside className="review-panel" aria-label="Human review">
       <div className="panel-heading">
         <div>
           <p className="eyebrow">Human review</p>
           <h2>Suggestions</h2>
         </div>
-        <span className="count-badge">{pending.length}</span>
+        <span className="count-badge">{editCount}</span>
       </div>
-      {pending.length === 0 ? (
+      {groups.length === 0 ? (
         <div className="empty-review">
           <div className="empty-check">✓</div>
           <strong>All caught up</strong>
-          <p>New agent changes will appear here for your approval.</p>
+          <p>New suggestions from your agent will appear here.</p>
         </div>
       ) : (
-        <div className="change-list">
-          {pending.map((change) => (
-            <article className="change-card" key={change.id}>
-              <div className="change-meta">
-                <span className="agent-dot" />
-                <span>{change.authorId}</span>
-                <time>
-                  {new Date(change.createdAt).toLocaleTimeString([], {
-                    hour: '2-digit',
-                    minute: '2-digit',
+        <div className="suggestion-groups">
+          {groups.map((group) => {
+            const groupChangeIds = group.edits.map(({ changeId }) => changeId);
+            return (
+              <section className="suggestion-group" key={group.id}>
+                <header className="group-heading">
+                  <div>
+                    <span className="group-kicker">Agent suggestion</span>
+                    <h3>{group.name}</h3>
+                    <p>
+                      {group.edits.length} {group.edits.length === 1 ? 'edit' : 'edits'} ·{' '}
+                      {group.authorId}
+                    </p>
+                  </div>
+                  <time>
+                    {new Date(group.createdAt).toLocaleTimeString([], {
+                      hour: '2-digit',
+                      minute: '2-digit',
+                    })}
+                  </time>
+                </header>
+                <div className="group-actions">
+                  <button
+                    className="accept-button"
+                    disabled={busyTarget !== undefined}
+                    onClick={() => void onResolve(groupChangeIds, 'accept', `group:${group.id}`)}
+                    type="button"
+                  >
+                    Accept all
+                  </button>
+                  <button
+                    className="reject-button"
+                    disabled={busyTarget !== undefined}
+                    onClick={() => void onResolve(groupChangeIds, 'reject', `group:${group.id}`)}
+                    type="button"
+                  >
+                    Reject all
+                  </button>
+                </div>
+                <div className="edit-list">
+                  {group.edits.map((edit, index) => {
+                    const preview = editPreview(edit.changeIds, edit.operation);
+                    return (
+                      <article className="edit-card" key={edit.id}>
+                        <button
+                          className="edit-preview"
+                          onClick={() => {
+                            navigateToEdit(edit.changeIds);
+                          }}
+                          type="button"
+                        >
+                          <span className="edit-number">Edit {index + 1}</span>
+                          <strong>{preview.label}</strong>
+                          {preview.before === undefined ? null : (
+                            <span className="preview-before">− {preview.before}</span>
+                          )}
+                          {preview.after === undefined ? null : (
+                            <span className="preview-after">+ {preview.after}</span>
+                          )}
+                          <span className="jump-link">View in document →</span>
+                        </button>
+                        <div className="edit-actions">
+                          <button
+                            className="accept-link"
+                            disabled={busyTarget !== undefined}
+                            onClick={() =>
+                              void onResolve([edit.changeId], 'accept', `edit:${edit.id}`)
+                            }
+                            type="button"
+                          >
+                            Accept
+                          </button>
+                          <button
+                            className="reject-link"
+                            disabled={busyTarget !== undefined}
+                            onClick={() =>
+                              void onResolve([edit.changeId], 'reject', `edit:${edit.id}`)
+                            }
+                            type="button"
+                          >
+                            Reject
+                          </button>
+                        </div>
+                      </article>
+                    );
                   })}
-                </time>
-              </div>
-              <strong>{change.operation} suggestion</strong>
-              <p>{change.summary ?? 'Review the highlighted changes in the document.'}</p>
-              <div className="review-actions">
-                <button
-                  className="accept-button"
-                  disabled={busyChange === change.id}
-                  onClick={() => void onResolve(change.id, 'accept')}
-                  type="button"
-                >
-                  Accept
-                </button>
-                <button
-                  className="reject-button"
-                  disabled={busyChange === change.id}
-                  onClick={() => void onResolve(change.id, 'reject')}
-                  type="button"
-                >
-                  Reject
-                </button>
-              </div>
-            </article>
-          ))}
+                </div>
+              </section>
+            );
+          })}
         </div>
       )}
     </aside>
@@ -146,8 +333,9 @@ function CollaborativeDocument({ session }: { readonly session: DocumentSession 
   );
   const [connection, setConnection] = useState('connecting');
   const [changes, setChanges] = useState<readonly ChangeMetadata[]>([]);
-  const [busyChange, setBusyChange] = useState<string>();
+  const [busyTarget, setBusyTarget] = useState<string>();
   const [reviewError, setReviewError] = useState<string>();
+  const [documentVersion, setDocumentVersion] = useState(0);
   const editor = useEditor(
     {
       extensions: editorExtensions(provider.document, session.identity.collaborationField),
@@ -156,6 +344,9 @@ function CollaborativeDocument({ session }: { readonly session: DocumentSession 
           class: 'document-content',
           'aria-label': 'Collaborative document editor',
         },
+      },
+      onUpdate: () => {
+        setDocumentVersion((version) => version + 1);
       },
     },
     [provider],
@@ -167,6 +358,9 @@ function CollaborativeDocument({ session }: { readonly session: DocumentSession 
       setChanges(
         [...map.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
       );
+      window.requestAnimationFrame(() => {
+        setDocumentVersion((version) => version + 1);
+      });
     };
     const onStatus = ({ status }: { status: string }) => {
       setConnection(status);
@@ -183,8 +377,12 @@ function CollaborativeDocument({ session }: { readonly session: DocumentSession 
     };
   }, [provider]);
 
-  const resolve = async (changeId: string, decision: 'accept' | 'reject') => {
-    setBusyChange(changeId);
+  const resolve = async (
+    changeIds: readonly string[],
+    decision: 'accept' | 'reject',
+    target: string,
+  ) => {
+    setBusyTarget(target);
     setReviewError(undefined);
     try {
       const identity = session.identity;
@@ -213,13 +411,11 @@ function CollaborativeDocument({ session }: { readonly session: DocumentSession 
             readRevision: read.revision,
             atomic: true,
             changeMode: 'direct',
-            operations: [
-              {
-                operationId: `review-${crypto.randomUUID()}`,
-                kind: decision === 'accept' ? 'accept_change' : 'reject_change',
-                changeId,
-              },
-            ],
+            operations: changeIds.map((changeId) => ({
+              operationId: `review-${crypto.randomUUID()}`,
+              kind: decision === 'accept' ? 'accept_change' : 'reject_change',
+              changeId,
+            })),
           }),
         },
       );
@@ -230,7 +426,7 @@ function CollaborativeDocument({ session }: { readonly session: DocumentSession 
     } catch (error) {
       setReviewError(error instanceof Error ? error.message : 'Review failed.');
     } finally {
-      setBusyChange(undefined);
+      setBusyTarget(undefined);
     }
   };
 
@@ -253,158 +449,31 @@ function CollaborativeDocument({ session }: { readonly session: DocumentSession 
         </div>
         {reviewError === undefined ? null : <div className="error-banner">{reviewError}</div>}
       </main>
-      <ReviewQueue changes={changes} busyChange={busyChange} onResolve={resolve} />
+      <ReviewQueue
+        busyTarget={busyTarget}
+        changes={changes}
+        documentVersion={documentVersion}
+        onResolve={resolve}
+      />
     </div>
   );
 }
 
-function ChatPanel({
-  session,
-  onSession,
-}: {
-  readonly session: DocumentSession | undefined;
-  readonly onSession: (session: DocumentSession, editorUrl: string) => void;
-}) {
-  const [messages, setMessages] = useState<readonly ChatMessage[]>([
-    {
-      id: 'welcome',
-      role: 'agent',
-      text: 'Tell me what you want to create. I’ll open a shared document and propose the first draft.',
-    },
-  ]);
-  const [input, setInput] = useState('');
-  const [sending, setSending] = useState(false);
-  const endRef = useRef<HTMLDivElement>(null);
-
-  useEffect(() => {
-    endRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
-
-  const send = async (message: string) => {
-    const trimmed = message.trim();
-    if (trimmed.length === 0 || sending) return;
-    setSending(true);
-    setInput('');
-    setMessages((current) => [
-      ...current,
-      { id: crypto.randomUUID(), role: 'user', text: trimmed },
-    ]);
-    try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ message: trimmed, document: session?.identity }),
-      });
-      const body = (await response.json()) as {
-        message?: string;
-        editorUrl?: string;
-        session?: DocumentSession;
-        error?: { message?: string };
-      };
-      if (!response.ok || body.session === undefined || body.editorUrl === undefined) {
-        throw new Error(body.error?.message ?? 'The demo agent could not complete that request.');
-      }
-      setMessages((current) => [
-        ...current,
-        {
-          id: crypto.randomUUID(),
-          role: 'agent',
-          text: body.message ?? 'I added a tracked suggestion.',
-        },
-      ]);
-      onSession(body.session, body.editorUrl);
-    } catch (error) {
-      setMessages((current) => [
-        ...current,
-        {
-          id: crypto.randomUUID(),
-          role: 'agent',
-          text: error instanceof Error ? error.message : 'Something went wrong.',
-        },
-      ]);
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const submit = (event: SyntheticEvent<HTMLFormElement>) => {
-    event.preventDefault();
-    void send(input);
-  };
-
+function ProductHeader() {
   return (
-    <aside className="chat-panel">
-      <header className="brand-header">
-        <div className="brand-mark">E</div>
+    <header className="product-header">
+      <div className="product-brand">
+        <span className="brand-mark">E</span>
         <div>
           <strong>Editor MCP</strong>
-          <span>Agent workspace</span>
+          <span>Bring your own agent</span>
         </div>
-      </header>
-      <div className="chat-intro">
-        <p className="eyebrow">Same tools, shared state</p>
-        <h1>Write together.</h1>
-        <p>The demo agent creates and edits through the MCP. You keep the final say.</p>
       </div>
-      <div className="messages" aria-live="polite">
-        {messages.map((message) => (
-          <div className={`message ${message.role}`} key={message.id}>
-            <span>{message.role === 'agent' ? 'Agent' : 'You'}</span>
-            <p>{message.text}</p>
-          </div>
-        ))}
-        {sending ? (
-          <div className="message agent thinking">
-            <span>Agent</span>
-            <p>Reading the live document…</p>
-          </div>
-        ) : null}
-        <div ref={endRef} />
+      <div className="agent-endpoint">
+        <span>Agent endpoint</span>
+        <code>{window.location.origin}/mcp</code>
       </div>
-      {session === undefined ? (
-        <div className="prompt-chips">
-          <button
-            onClick={() => void send('Create a one-page launch brief for Editor MCP.')}
-            type="button"
-          >
-            Draft a launch brief
-          </button>
-          <button
-            onClick={() =>
-              void send('Create a product requirements document for collaborative agent editing.')
-            }
-            type="button"
-          >
-            Start a product spec
-          </button>
-        </div>
-      ) : null}
-      <form className="chat-form" onSubmit={submit}>
-        <textarea
-          aria-label="Message the document agent"
-          onChange={(event) => {
-            setInput(event.target.value);
-          }}
-          onKeyDown={(event) => {
-            if (event.key === 'Enter' && !event.shiftKey) {
-              event.preventDefault();
-              void send(input);
-            }
-          }}
-          placeholder={
-            session === undefined ? 'What should we create?' : 'Ask for another revision…'
-          }
-          rows={3}
-          value={input}
-        />
-        <button disabled={sending || input.trim().length === 0} type="submit">
-          Send
-        </button>
-      </form>
-      <footer>
-        External agents can connect at <code>/mcp</code>
-      </footer>
-    </aside>
+    </header>
   );
 }
 
@@ -427,15 +496,9 @@ export function App() {
       });
   }, []);
 
-  const selectSession = (nextSession: DocumentSession, editorUrl: string) => {
-    setSession(nextSession);
-    const url = new URL(editorUrl);
-    window.history.pushState({}, '', `${url.pathname}${url.search}`);
-  };
-
   return (
     <div className="app-shell">
-      <ChatPanel session={session} onSession={selectSession} />
+      <ProductHeader />
       {loading ? (
         <main className="welcome-canvas">
           <div className="loading-card">Opening the live document…</div>
@@ -445,20 +508,24 @@ export function App() {
           <main className="welcome-canvas">
             <div className="welcome-card">
               <span className="live-pill">
-                <i /> Ready for an agent
+                <i /> Ready for your agent
               </span>
-              <h2>A document is one conversation away.</h2>
+              <h1>Start the document from the agent you already use.</h1>
               <p>
-                Start in the chat. The agent will create the document, return its URL, and propose
-                the first draft here.
+                Connect Codex, Claude, or any MCP client to the endpoint above. Your agent creates
+                the document, proposes named groups of edits, and returns the shared URL.
               </p>
-              <div className="flow-line">
-                <span>Chat request</span>
-                <b>→</b>
-                <span>MCP tools</span>
-                <b>→</b>
-                <span>Live Tiptap document</span>
-              </div>
+              <ol className="agent-steps">
+                <li>
+                  <span>1</span>Connect your MCP client
+                </li>
+                <li>
+                  <span>2</span>Ask it to create and edit a document
+                </li>
+                <li>
+                  <span>3</span>Open the returned URL and review together
+                </li>
+              </ol>
             </div>
           </main>
         ) : (

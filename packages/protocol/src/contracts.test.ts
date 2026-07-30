@@ -321,11 +321,15 @@ describe('complete MVP operation contract', () => {
       readRevision: 'rev_1',
       atomic: true,
       changeMode: 'suggest',
+      suggestionGroupName: 'Refresh opening paragraph',
       operations: [replaceOperation],
     } as const;
 
     expect(applyEditsRequestV1Schema.parse(request).atomic).toBe(true);
     expect(() => applyEditsRequestV1Schema.parse({ ...request, atomic: false })).toThrow();
+    expect(() =>
+      applyEditsRequestV1Schema.parse({ ...request, suggestionGroupName: undefined }),
+    ).toThrow(/group name/i);
     expect(() =>
       applyEditsRequestV1Schema.parse({
         ...request,
@@ -898,6 +902,13 @@ describe('defensive contract refinements', () => {
     } as const;
 
     expect(() => changeMetadataSchema.parse({ ...change, status: 'grouped' })).toThrow(/group/i);
+    expect(() =>
+      changeMetadataSchema.parse({
+        ...change,
+        status: 'pending',
+        suggestionGroupName: 'Refresh objectives',
+      }),
+    ).toThrow(/group ID and name/i);
     expect(() => changeMetadataSchema.parse({ ...change, status: 'accepted' })).toThrow(
       /resolution/i,
     );

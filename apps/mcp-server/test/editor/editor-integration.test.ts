@@ -142,6 +142,7 @@ describe('editor MCP vertical slice', () => {
               readRevision: before.revision,
               atomic: true,
               changeMode: 'suggest',
+              suggestionGroupName: 'Rewrite opening line',
               operations: [
                 {
                   operationId: 'replace-text-1',

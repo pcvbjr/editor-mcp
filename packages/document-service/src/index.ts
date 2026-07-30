@@ -395,7 +395,8 @@ function markJson(mark: Mark): ProseMirrorMarkJson {
 
 function changeRecord(
   id: string,
-  groupId: string,
+  suggestionGroupId: string,
+  operationId: string,
   operation: ChangeMetadata['operation'],
   baseBlockId: string,
   request: ApplyEditsRequest,
@@ -404,7 +405,14 @@ function changeRecord(
 ): ChangeMetadata {
   return {
     id,
-    groupId,
+    groupId: changeGroupId(suggestionGroupId, operationId),
+    ...(request.suggestionGroupName === undefined
+      ? {}
+      : {
+          suggestionGroupId,
+          suggestionGroupName: request.suggestionGroupName,
+          operationId,
+        }),
     status: 'pending',
     operation,
     authorId: context.authorization.principalId,
@@ -534,7 +542,8 @@ function directOrSuggestedBlockInsert(
       state,
       changeRecord(
         changeId,
-        changeGroupId(changeSetId, operation.operationId),
+        changeSetId,
+        operation.operationId,
         'insert',
         operation.anchorBlockId,
         request,
@@ -594,7 +603,8 @@ function replaceBlock(
       replacement,
       changeRecord(
         changeId,
-        changeGroupId(changeSetId, operation.operationId),
+        changeSetId,
+        operation.operationId,
         'replace',
         operation.blockId,
         request,
@@ -641,7 +651,8 @@ function deleteBlock(
       state,
       changeRecord(
         changeId,
-        changeGroupId(changeSetId, operation.operationId),
+        changeSetId,
+        operation.operationId,
         'delete',
         operation.blockId,
         request,
@@ -699,7 +710,8 @@ function applyTextOperation(
       marks.push(requiredMarkType('diffChange').create({ changeId, kind: 'insert' }));
       record = changeRecord(
         changeId,
-        changeGroupId(changeSetId, operation.operationId),
+        changeSetId,
+        operation.operationId,
         'insert',
         operation.blockId,
         request,
@@ -718,7 +730,8 @@ function applyTextOperation(
       );
       record = changeRecord(
         changeId,
-        changeGroupId(changeSetId, operation.operationId),
+        changeSetId,
+        operation.operationId,
         'delete',
         operation.blockId,
         request,
@@ -745,7 +758,8 @@ function applyTextOperation(
       );
       record = changeRecord(
         changeId,
-        changeGroupId(changeSetId, operation.operationId),
+        changeSetId,
+        operation.operationId,
         'replace',
         operation.blockId,
         request,
@@ -776,7 +790,8 @@ function applyTextOperation(
       record = {
         ...changeRecord(
           changeId,
-          changeGroupId(changeSetId, operation.operationId),
+          changeSetId,
+          operation.operationId,
           'format',
           operation.blockId,
           request,
@@ -857,7 +872,8 @@ function applyRowOperation(
       state,
       changeRecord(
         changeId,
-        changeGroupId(changeSetId, operation.operationId),
+        changeSetId,
+        operation.operationId,
         'structure',
         operation.tableId,
         request,
@@ -924,7 +940,8 @@ function applyColumnOperation(
       state,
       changeRecord(
         changeId,
-        changeGroupId(changeSetId, operation.operationId),
+        changeSetId,
+        operation.operationId,
         'structure',
         operation.tableId,
         request,

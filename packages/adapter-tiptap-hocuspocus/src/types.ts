@@ -95,7 +95,12 @@ export interface FormattingSnapshot {
 
 export interface ChangeMetadata {
   readonly id: string;
+  /** Atomic review unit for one logical edit operation. */
   readonly groupId?: string;
+  /** User-facing batch that may contain multiple independently reviewable edits. */
+  readonly suggestionGroupId?: string;
+  readonly suggestionGroupName?: string;
+  readonly operationId?: string;
   readonly status: ChangeStatus;
   readonly operation: MetadataOperation;
   readonly authorId: string;
