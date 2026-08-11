@@ -4,7 +4,7 @@ import {
   connectCollaborationProvider,
   deferCollaborationProviderDestroy,
   type CollaborationProviderLifecycle,
-} from './provider-lifecycle';
+} from './provider-lifecycle.js';
 
 describe('collaboration provider lifecycle', () => {
   afterEach(() => {
