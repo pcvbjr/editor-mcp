@@ -39,7 +39,10 @@ const publicOrigin =
     ? `http://${apiHost}:${String(apiPort)}`
     : 'http://127.0.0.1:5173');
 const collaborationUrl =
-  process.env['DEMO_COLLABORATION_URL'] ?? `ws://${apiHost}:${String(collaborationPort)}`;
+  process.env['DEMO_COLLABORATION_URL'] ??
+  (process.env['NODE_ENV'] === 'production'
+    ? `ws://${apiHost}:${String(collaborationPort)}`
+    : 'ws://127.0.0.1:5173/collaboration');
 
 function parsePort(value: string | undefined, fallback: number, name: string): number {
   const parsed = value === undefined ? fallback : Number(value);
