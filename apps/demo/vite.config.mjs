@@ -16,6 +16,10 @@ export default defineConfig({
       '/v1': 'http://127.0.0.1:3030',
       '/healthz': 'http://127.0.0.1:3030',
       '/mcp': 'http://127.0.0.1:3030',
+      '/collaboration': {
+        target: 'ws://127.0.0.1:1234',
+        ws: true,
+      },
     },
   },
 });

@@ -1,8 +1,13 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { EditorContent, useEditor } from '@tiptap/react';
 import { HocuspocusProvider } from '@hocuspocus/provider';
 
 import { editorExtensions } from './extensions';
+import {
+  connectCollaborationProvider,
+  deferCollaborationProviderDestroy,
+  type CollaborationProviderLifecycle,
+} from './provider-lifecycle';
 import type { ChangeMetadata, DocumentIdentity, DocumentSession } from './types';
 
 const humanHeaders = {
@@ -14,13 +19,11 @@ interface ReviewEdit {
   readonly id: string;
   readonly changeId: string;
   readonly changeIds: readonly string[];
-  readonly operation: ChangeMetadata['operation'];
 }
 
 interface ReviewGroup {
   readonly id: string;
   readonly name: string;
-  readonly authorId: string;
   readonly createdAt: string;
   readonly edits: readonly ReviewEdit[];
 }
@@ -28,7 +31,6 @@ interface ReviewGroup {
 interface EditPreview {
   readonly before?: string;
   readonly after?: string;
-  readonly label: string;
 }
 
 function identityFromLocation(): DocumentIdentity | undefined {
@@ -57,33 +59,41 @@ function Toolbar({ editor }: { editor: ReturnType<typeof useEditor> }) {
   return (
     <div className="toolbar" role="toolbar" aria-label="Document formatting">
       <button
+        aria-label="Bold"
+        title="Bold"
         className={editor.isActive('bold') ? 'active' : ''}
         onClick={() => editor.chain().focus().toggleBold().run()}
         type="button"
       >
-        Bold
+        <strong>B</strong>
       </button>
       <button
+        aria-label="Italic"
+        title="Italic"
         className={editor.isActive('italic') ? 'active' : ''}
         onClick={() => editor.chain().focus().toggleItalic().run()}
         type="button"
       >
-        Italic
+        <em>I</em>
       </button>
       <span className="toolbar-divider" />
       <button
+        aria-label="Heading"
+        title="Heading"
         className={editor.isActive('heading', { level: 2 }) ? 'active' : ''}
         onClick={() => editor.chain().focus().toggleHeading({ level: 2 }).run()}
         type="button"
       >
-        Heading
+        <span className="toolbar-icon toolbar-heading-icon">H</span>
       </button>
       <button
+        aria-label="Bullet list"
+        title="Bullet list"
         className={editor.isActive('bulletList') ? 'active' : ''}
         onClick={() => editor.chain().focus().toggleBulletList().run()}
         type="button"
       >
-        List
+        <span className="toolbar-icon list-icon">•</span>
       </button>
     </div>
   );
@@ -94,7 +104,6 @@ function pendingReviewGroups(changes: readonly ChangeMetadata[]): readonly Revie
     string,
     {
       name: string;
-      authorId: string;
       createdAt: string;
       edits: Map<string, ChangeMetadata[]>;
     }
@@ -104,7 +113,6 @@ function pendingReviewGroups(changes: readonly ChangeMetadata[]): readonly Revie
     const groupId = change.suggestionGroupId ?? change.id;
     const group = groups.get(groupId) ?? {
       name: change.suggestionGroupName ?? 'Suggested edits',
-      authorId: change.authorId,
       createdAt: change.createdAt,
       edits: new Map<string, ChangeMetadata[]>(),
     };
@@ -117,7 +125,6 @@ function pendingReviewGroups(changes: readonly ChangeMetadata[]): readonly Revie
     .map(([id, group]): ReviewGroup => ({
       id,
       name: group.name,
-      authorId: group.authorId,
       createdAt: group.createdAt,
       edits: [...group.edits.entries()].map(([editId, records]) => {
         const first = records[0];
@@ -126,7 +133,6 @@ function pendingReviewGroups(changes: readonly ChangeMetadata[]): readonly Revie
           id: editId,
           changeId: first.id,
           changeIds: records.map(({ id: changeId }) => changeId),
-          operation: first.operation,
         };
       }),
     }))
@@ -146,10 +152,7 @@ function combinedPreview(elements: readonly HTMLElement[]): string | undefined {
   return combined.length > 150 ? `${combined.slice(0, 147)}…` : combined;
 }
 
-function editPreview(
-  changeIds: readonly string[],
-  operation: ReviewEdit['operation'],
-): EditPreview {
+function editPreview(changeIds: readonly string[]): EditPreview {
   const selected = new Set(changeIds);
   const elements = [...document.querySelectorAll<HTMLElement>('[data-diff-change-id]')].filter(
     (element) => selected.has(element.dataset['diffChangeId'] ?? ''),
@@ -160,15 +163,7 @@ function editPreview(
   const after = combinedPreview(
     elements.filter((element) => element.dataset['diffChangeKind'] !== 'delete'),
   );
-  const labels: Record<ReviewEdit['operation'], string> = {
-    delete: 'Remove content',
-    format: 'Change formatting',
-    insert: 'Add content',
-    replace: 'Replace content',
-    structure: 'Change table structure',
-  };
   return {
-    label: labels[operation],
     ...(before === undefined ? {} : { before }),
     ...(after === undefined ? {} : { after }),
   };
@@ -213,10 +208,7 @@ function ReviewQueue({
   return (
     <aside className="review-panel" aria-label="Human review">
       <div className="panel-heading">
-        <div>
-          <p className="eyebrow">Human review</p>
-          <h2>Suggestions</h2>
-        </div>
+        <p className="eyebrow">Human review</p>
         <span className="count-badge">{editCount}</span>
       </div>
       {groups.length === 0 ? (
@@ -232,20 +224,7 @@ function ReviewQueue({
             return (
               <section className="suggestion-group" key={group.id}>
                 <header className="group-heading">
-                  <div>
-                    <span className="group-kicker">Agent suggestion</span>
-                    <h3>{group.name}</h3>
-                    <p>
-                      {group.edits.length} {group.edits.length === 1 ? 'edit' : 'edits'} ·{' '}
-                      {group.authorId}
-                    </p>
-                  </div>
-                  <time>
-                    {new Date(group.createdAt).toLocaleTimeString([], {
-                      hour: '2-digit',
-                      minute: '2-digit',
-                    })}
-                  </time>
+                  <h3>{group.name}</h3>
                 </header>
                 <div className="group-actions">
                   <button
@@ -266,8 +245,8 @@ function ReviewQueue({
                   </button>
                 </div>
                 <div className="edit-list">
-                  {group.edits.map((edit, index) => {
-                    const preview = editPreview(edit.changeIds, edit.operation);
+                  {group.edits.map((edit) => {
+                    const preview = editPreview(edit.changeIds);
                     return (
                       <article className="edit-card" key={edit.id}>
                         <button
@@ -277,8 +256,6 @@ function ReviewQueue({
                           }}
                           type="button"
                         >
-                          <span className="edit-number">Edit {index + 1}</span>
-                          <strong>{preview.label}</strong>
                           {preview.before === undefined ? null : (
                             <span className="preview-before">− {preview.before}</span>
                           )}
@@ -331,7 +308,7 @@ function CollaborativeDocument({ session }: { readonly session: DocumentSession 
       }),
     [session.collaborationUrl, session.documentName],
   );
-  const [connection, setConnection] = useState('connecting');
+  const providerLifecycle = useRef<CollaborationProviderLifecycle>({ destroyTimer: undefined });
   const [changes, setChanges] = useState<readonly ChangeMetadata[]>([]);
   const [busyTarget, setBusyTarget] = useState<string>();
   const [reviewError, setReviewError] = useState<string>();
@@ -354,7 +331,7 @@ function CollaborativeDocument({ session }: { readonly session: DocumentSession 
 
   useEffect(() => {
     const map = provider.document.getMap<ChangeMetadata>('diffChanges');
-    const refresh = () => {
+    const refreshChanges = () => {
       setChanges(
         [...map.values()].sort((left, right) => left.createdAt.localeCompare(right.createdAt)),
       );
@@ -362,18 +339,17 @@ function CollaborativeDocument({ session }: { readonly session: DocumentSession 
         setDocumentVersion((version) => version + 1);
       });
     };
-    const onStatus = ({ status }: { status: string }) => {
-      setConnection(status);
+    const updateSyncStatus = () => {
+      refreshChanges();
     };
-    map.observe(refresh);
-    provider.on('status', onStatus);
-    provider.on('synced', refresh);
-    refresh();
+    map.observe(refreshChanges);
+    provider.on('synced', updateSyncStatus);
+    refreshChanges();
+    connectCollaborationProvider(provider, providerLifecycle.current);
     return () => {
-      map.unobserve(refresh);
-      provider.off('status', onStatus);
-      provider.off('synced', refresh);
-      provider.destroy();
+      map.unobserve(refreshChanges);
+      provider.off('synced', updateSyncStatus);
+      deferCollaborationProviderDestroy(provider, providerLifecycle.current);
     };
   }, [provider]);
 
@@ -433,16 +409,6 @@ function CollaborativeDocument({ session }: { readonly session: DocumentSession 
   return (
     <div className="document-workspace">
       <main className="editor-shell">
-        <header className="document-header">
-          <div>
-            <p className="eyebrow">Shared document</p>
-            <h1>Collaborative working document</h1>
-          </div>
-          <div className={`connection-status ${connection}`}>
-            <span />
-            {connection === 'connected' ? 'Live & saved' : connection}
-          </div>
-        </header>
         <Toolbar editor={editor} />
         <div className="paper">
           <EditorContent editor={editor} />
@@ -460,24 +426,40 @@ function CollaborativeDocument({ session }: { readonly session: DocumentSession 
 }
 
 function ProductHeader() {
+  const [expanded, setExpanded] = useState(false);
+
   return (
     <header className="product-header">
-      <div className="product-brand">
+      <button
+        aria-expanded={expanded}
+        aria-label="Show product details"
+        className="product-brand"
+        onClick={() => {
+          setExpanded((value) => !value);
+        }}
+        type="button"
+      >
         <span className="brand-mark">E</span>
         <div>
           <strong>Editor MCP</strong>
           <span>Bring your own agent</span>
         </div>
-      </div>
-      <div className="agent-endpoint">
-        <span>Agent endpoint</span>
-        <code>{window.location.origin}/mcp</code>
-      </div>
+        <span className="brand-chevron" aria-hidden="true">
+          ⌄
+        </span>
+      </button>
+      {expanded ? (
+        <div className="agent-endpoint">
+          <span>Agent endpoint</span>
+          <code>{window.location.origin}/mcp</code>
+        </div>
+      ) : null}
     </header>
   );
 }
 
 export function App() {
+  const documentRoute = identityFromLocation() !== undefined;
   const [session, setSession] = useState<DocumentSession>();
   const [loading, setLoading] = useState(false);
   const [loadError, setLoadError] = useState<string>();
@@ -498,7 +480,7 @@ export function App() {
 
   return (
     <div className="app-shell">
-      <ProductHeader />
+      {documentRoute ? null : <ProductHeader />}
       {loading ? (
         <main className="welcome-canvas">
           <div className="loading-card">Opening the live document…</div>
